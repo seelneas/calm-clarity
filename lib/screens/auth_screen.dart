@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import '../theme.dart';
+import '../providers/journal_provider.dart';
 import '../services/preferences_service.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -45,6 +48,9 @@ class _AuthScreenState extends State<AuthScreen>
   Future<void> _continueWithoutAccount() async {
     await PreferencesService.setOnboardingShowed();
     if (mounted) {
+      await Provider.of<JournalProvider>(context, listen: false).loadData();
+    }
+    if (mounted) {
       Navigator.pushReplacementNamed(context, '/home');
     }
   }
@@ -63,6 +69,12 @@ class _AuthScreenState extends State<AuthScreen>
 
     if (result['success']) {
       await PreferencesService.setOnboardingShowed();
+      await NotificationService.syncPushTokenWithBackend();
+      await NotificationService.syncPreferencesToBackend();
+      await AuthService.startGoogleCalendarAutoSyncIfEnabled();
+      if (mounted) {
+        await Provider.of<JournalProvider>(context, listen: false).loadData();
+      }
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/home');
       }
@@ -94,6 +106,12 @@ class _AuthScreenState extends State<AuthScreen>
 
     if (result['success']) {
       await PreferencesService.setOnboardingShowed();
+      await NotificationService.syncPushTokenWithBackend();
+      await NotificationService.syncPreferencesToBackend();
+      await AuthService.startGoogleCalendarAutoSyncIfEnabled();
+      if (mounted) {
+        await Provider.of<JournalProvider>(context, listen: false).loadData();
+      }
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/home');
       }
@@ -113,6 +131,12 @@ class _AuthScreenState extends State<AuthScreen>
 
     if (result['success']) {
       await PreferencesService.setOnboardingShowed();
+      await NotificationService.syncPushTokenWithBackend();
+      await NotificationService.syncPreferencesToBackend();
+      await AuthService.startGoogleCalendarAutoSyncIfEnabled();
+      if (mounted) {
+        await Provider.of<JournalProvider>(context, listen: false).loadData();
+      }
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/home');
       }

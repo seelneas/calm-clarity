@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -11,7 +12,9 @@ import '../providers/journal_provider.dart';
 import '../models/journal_entry.dart';
 import '../services/preferences_service.dart';
 import '../services/auth_service.dart';
+import '../services/account_access_service.dart';
 import '../providers/theme_provider.dart';
+import '../widgets/guest_mode_banner.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -27,7 +30,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   double _fontSize = 16.0;
   bool _isLoading = true;
   bool _googleConnected = false;
-  bool _appleConnected = false;
+  bool _isSyncingGoogleEvents = false;
+  List<Map<String, dynamic>> _googleUpcomingEvents = const [];
   final ImagePicker _picker = ImagePicker();
 
   @override
@@ -42,7 +46,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final photo = await PreferencesService.getProfilePhotoPath();
     final fs = await PreferencesService.getFontSize();
     final gc = await PreferencesService.isGoogleCalendarConnected();
-    final ah = await PreferencesService.isAppleHealthConnected();
 
     if (mounted) {
       setState(() {
@@ -51,9 +54,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _profilePhotoPath = photo;
         _fontSize = fs;
         _googleConnected = gc;
-        _appleConnected = ah;
         _isLoading = false;
       });
+
+      if (gc) {
+        await _refreshGoogleEvents();
+      }
     }
   }
 
@@ -129,6 +135,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     children: [
                       // Profile Header
                       const SizedBox(height: 24),
+                      const GuestModeBanner(
+                        subtitle:
+                            'You are in guest mode. Create an account to unlock backups, integrations, and cross-device sync.',
+                      ),
+                      const SizedBox(height: 16),
                       Center(
                         child: Column(
                           children: [
@@ -146,22 +157,49 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   ),
                                   child: ClipOval(
                                     child: _profilePhotoPath != null
-                                        ? Image.file(
-                                            File(_profilePhotoPath!),
-                                            fit: BoxFit.cover,
-                                            errorBuilder:
-                                                (context, error, stackTrace) {
-                                                  return Container(
-                                                    color: theme.cardColor,
-                                                    child: Icon(
-                                                      Icons.person,
-                                                      color:
-                                                          AppTheme.primaryColor,
-                                                      size: 48,
-                                                    ),
-                                                  );
-                                                },
-                                          )
+                                        ? (kIsWeb
+                                              ? Image.network(
+                                                  _profilePhotoPath!,
+                                                  fit: BoxFit.cover,
+                                                  errorBuilder:
+                                                      (
+                                                        context,
+                                                        error,
+                                                        stackTrace,
+                                                      ) {
+                                                        return Container(
+                                                          color:
+                                                              theme.cardColor,
+                                                          child: Icon(
+                                                            Icons.person,
+                                                            color: AppTheme
+                                                                .primaryColor,
+                                                            size: 48,
+                                                          ),
+                                                        );
+                                                      },
+                                                )
+                                              : Image.file(
+                                                  File(_profilePhotoPath!),
+                                                  fit: BoxFit.cover,
+                                                  errorBuilder:
+                                                      (
+                                                        context,
+                                                        error,
+                                                        stackTrace,
+                                                      ) {
+                                                        return Container(
+                                                          color:
+                                                              theme.cardColor,
+                                                          child: Icon(
+                                                            Icons.person,
+                                                            color: AppTheme
+                                                                .primaryColor,
+                                                            size: 48,
+                                                          ),
+                                                        );
+                                                      },
+                                                ))
                                         : Image.network(
                                             'https://i.pravatar.cc/300',
                                             fit: BoxFit.cover,
@@ -315,6 +353,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           onTap: _pickImage,
                         ),
                         _buildSettingsItem(
+                          Icons.person_remove_outlined,
+                          'Remove Photo',
+                          isDestructive: true,
+                          onTap: _removeProfilePhoto,
+                        ),
+                        _buildSettingsItem(
                           Icons.file_download_outlined,
                           'Export Data',
                           onTap: () {
@@ -406,30 +450,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       const SizedBox(height: 32),
                       // Integrations
                       _buildSectionHeader('INTEGRATIONS'),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildIntegrationCard(
-                              Icons.calendar_month,
-                              'Google Calendar',
-                              _googleConnected ? 'Connected' : 'Not Linked',
-                              _googleConnected,
-                              onTap: () =>
-                                  _toggleIntegration('Google Calendar'),
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: _buildIntegrationCard(
-                              Icons.health_and_safety,
-                              'Apple Health',
-                              _appleConnected ? 'Connected' : 'Not Linked',
-                              _appleConnected,
-                              onTap: () => _toggleIntegration('Apple Health'),
-                            ),
-                          ),
-                        ],
+                      _buildIntegrationCard(
+                        Icons.calendar_month,
+                        'Google Calendar',
+                        _googleConnected
+                            ? 'Connected • Tap for actions'
+                            : 'Tap to connect',
+                        _googleConnected,
+                        onTap: _handleGoogleCalendarTap,
                       ),
+                      if (_googleConnected) ...[
+                        const SizedBox(height: 16),
+                        _buildGoogleEventsPreviewCard(),
+                      ],
                       const SizedBox(height: 32),
                       // Support
                       _buildSectionHeader('SUPPORT & ABOUT'),
@@ -515,7 +548,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.bold,
-              color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+              color: Theme.of(
+                context,
+              ).colorScheme.onSurface.withValues(alpha: 0.5),
             ),
             textAlign: TextAlign.center,
           ),
@@ -529,9 +564,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _pickImage() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
     if (image != null) {
-      await PreferencesService.setProfilePhotoPath(image.path);
+      String storedPhoto = image.path;
+      if (kIsWeb) {
+        final bytes = await image.readAsBytes();
+        final encoded = base64Encode(bytes);
+        final lowerName = image.name.toLowerCase();
+        var mime = 'image/jpeg';
+        if (lowerName.endsWith('.png')) {
+          mime = 'image/png';
+        } else if (lowerName.endsWith('.gif')) {
+          mime = 'image/gif';
+        } else if (lowerName.endsWith('.webp')) {
+          mime = 'image/webp';
+        }
+        storedPhoto = 'data:$mime;base64,$encoded';
+      }
+
+      await PreferencesService.setProfilePhotoPath(storedPhoto);
       setState(() {
-        _profilePhotoPath = image.path;
+        _profilePhotoPath = storedPhoto;
       });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -542,6 +593,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
         );
       }
     }
+  }
+
+  Future<void> _removeProfilePhoto() async {
+    await PreferencesService.setProfilePhotoPath('');
+    if (!mounted) return;
+    setState(() {
+      _profilePhotoPath = null;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Profile photo removed.'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   void _showEditProfileDialog() {
@@ -672,7 +737,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'user': _userName,
       'entries': entriesData,
     };
-    final jsonString = const JsonEncoder.withIndent('  ').convert(exportPayload);
+    final jsonString = const JsonEncoder.withIndent(
+      '  ',
+    ).convert(exportPayload);
     final fileName =
         'calm_clarity_export_${DateTime.now().millisecondsSinceEpoch}.json';
 
@@ -865,112 +932,309 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (!confirm) return;
 
     await AuthService.logout();
+    await Provider.of<JournalProvider>(context, listen: false).loadData();
     if (!mounted) return;
 
     Navigator.pushNamedAndRemoveUntil(context, '/auth', (route) => false);
   }
 
-  Future<void> _toggleIntegration(String type) async {
-    final bool currentlyConnected = type == 'Google Calendar'
-        ? _googleConnected
-        : _appleConnected;
+  Future<void> _handleGoogleCalendarTap() async {
+    final allowed = await AccountAccessService.requireAccount(
+      context,
+      featureLabel: 'Google Calendar integration',
+    );
+    if (!allowed) return;
 
-    if (currentlyConnected) {
-      // Confirm disconnect
-      bool confirm =
-          await showDialog(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              backgroundColor: AppTheme.cardColor,
-              title: Text('Disconnect $type'),
-              content: Text(
-                'Are you sure you want to disconnect your $type account?',
-              ),
-              actions: [
-                TextButton(
-                  child: const Text(
-                    'Cancel',
-                    style: TextStyle(color: Colors.blueGrey),
-                  ),
-                  onPressed: () => Navigator.pop(ctx, false),
-                ),
-                TextButton(
-                  child: const Text(
-                    'Disconnect',
-                    style: TextStyle(color: Colors.redAccent),
-                  ),
-                  onPressed: () => Navigator.pop(ctx, true),
-                ),
-              ],
-            ),
-          ) ??
-          false;
-
-      if (!confirm) return;
+    if (!_googleConnected) {
+      await _connectGoogleCalendar();
+      return;
     }
 
-    // Show loading flow
-    if (mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: AppTheme.cardColor,
-          content: Column(
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Theme.of(context).cardColor,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const CircularProgressIndicator(color: AppTheme.primaryColor),
-              const SizedBox(height: 20),
-              Text(
-                currentlyConnected
-                    ? 'Disconnecting...'
-                    : 'Connecting to $type...',
+              ListTile(
+                leading: const Icon(Icons.sync),
+                title: const Text('Sync Upcoming Events'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _syncGoogleCalendar();
+                },
               ),
-              if (!currentlyConnected) ...[
-                const SizedBox(height: 8),
-                const Text(
-                  'Please wait while we authenticate...',
-                  style: TextStyle(fontSize: 12, color: Colors.blueGrey),
+              ListTile(
+                leading: const Icon(Icons.event_available),
+                title: const Text('Create Focus Event'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _createGoogleFocusEvent();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.link_off, color: Colors.redAccent),
+                title: const Text(
+                  'Disconnect',
+                  style: TextStyle(color: Colors.redAccent),
                 ),
-              ],
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await _disconnectGoogleCalendar();
+                },
+              ),
             ],
           ),
-        ),
-      );
-    }
-
-    // Simulate network delay
-    await Future.delayed(const Duration(seconds: 2));
-
-    final bool newStatus = !currentlyConnected;
-    if (type == 'Google Calendar') {
-      _googleConnected = newStatus;
-      await PreferencesService.setGoogleCalendarConnected(newStatus);
-    } else {
-      _appleConnected = newStatus;
-      await PreferencesService.setAppleHealthConnected(newStatus);
-    }
-
-    // Sync with backend
-    await AuthService.updateIntegrations(
-      _userEmail,
-      _googleConnected,
-      _appleConnected,
+        );
+      },
     );
+  }
+
+  Future<void> _connectGoogleCalendar() async {
+    _showLoadingDialog('Connecting Google Calendar...');
+    final result = await AuthService.connectGoogleCalendar();
+    if (mounted) {
+      Navigator.pop(context);
+      if (result['success'] == true) {
+        setState(() => _googleConnected = true);
+        await AuthService.updateGoogleCalendarSyncSettings(
+          autoSyncEnabled: true,
+          syncIntervalMinutes: 5,
+        );
+        await AuthService.startGoogleCalendarAutoSyncIfEnabled();
+        await _refreshGoogleEvents();
+        _showSnack('Google Calendar connected.', success: true);
+      } else {
+        _showSnack(result['message'] ?? 'Google Calendar connection failed');
+      }
+    }
+  }
+
+  Future<void> _syncGoogleCalendar() async {
+    _showLoadingDialog('Syncing upcoming events...');
+    final syncResult = await AuthService.runGoogleCalendarSync();
+    final result = syncResult['success'] == true
+        ? {
+            'success': true,
+            'events': List<Map<String, dynamic>>.from(
+              syncResult['events'] ?? const [],
+            ),
+          }
+        : await _refreshGoogleEvents();
+    if (mounted) {
+      Navigator.pop(context);
+      if (result['success'] == true) {
+        final events = List<Map<String, dynamic>>.from(
+          result['events'] ?? const [],
+        );
+        if (events.isEmpty) {
+          _showSnack('No upcoming events found.', success: true);
+        } else {
+          final first = events.first;
+          final summary = first['summary'] ?? 'Event';
+          _showSnack(
+            'Synced ${events.length} events. Next: $summary',
+            success: true,
+          );
+        }
+      } else {
+        _showSnack(result['message'] ?? 'Event sync failed');
+      }
+    }
+  }
+
+  Future<void> _createGoogleFocusEvent() async {
+    _showLoadingDialog('Creating focus event...');
+    final start = DateTime.now().add(const Duration(minutes: 15));
+    final end = start.add(const Duration(minutes: 30));
+    final result = await AuthService.runGoogleCalendarSync(
+      localChanges: [
+        {
+          'action': 'create',
+          'client_event_id': 'focus-${DateTime.now().millisecondsSinceEpoch}',
+          'summary': 'Calm Clarity Focus Session',
+          'description':
+              'A mindful check-in session generated from Calm Clarity.',
+          'start_iso': start.toUtc().toIso8601String(),
+          'end_iso': end.toUtc().toIso8601String(),
+          'timezone': 'UTC',
+        },
+      ],
+    );
+    if (mounted) {
+      Navigator.pop(context);
+      if (result['success'] == true) {
+        _showSnack('Focus event created in Google Calendar.', success: true);
+      } else {
+        _showSnack(result['message'] ?? 'Could not create event');
+      }
+    }
+  }
+
+  Future<void> _disconnectGoogleCalendar() async {
+    _showLoadingDialog('Disconnecting Google Calendar...');
+    final result = await AuthService.disconnectGoogleCalendar();
+    if (mounted) {
+      Navigator.pop(context);
+      if (result['success'] == true) {
+        await AuthService.stopGoogleCalendarAutoSyncLoop();
+        setState(() {
+          _googleConnected = false;
+          _googleUpcomingEvents = const [];
+        });
+        _showSnack('Google Calendar disconnected.', success: true);
+      } else {
+        _showSnack(result['message'] ?? 'Disconnect failed');
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> _refreshGoogleEvents() async {
+    if (mounted) {
+      setState(() => _isSyncingGoogleEvents = true);
+    }
+
+    final result = await AuthService.runGoogleCalendarSync();
 
     if (mounted) {
-      Navigator.pop(context); // Close loading dialog
-      setState(() {});
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            newStatus ? '$type connected successfully!' : '$type disconnected',
-          ),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: newStatus ? Colors.green : Colors.blueGrey,
-        ),
-      );
+      setState(() {
+        _isSyncingGoogleEvents = false;
+        if (result['success'] == true) {
+          _googleUpcomingEvents = List<Map<String, dynamic>>.from(
+            result['events'] ?? const [],
+          );
+        }
+      });
     }
+    return result;
+  }
+
+  Widget _buildGoogleEventsPreviewCard() {
+    final theme = Theme.of(context);
+    final colors = theme.extension<AppColors>()!;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.cardColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: theme.dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.event_note,
+                size: 18,
+                color: AppTheme.primaryColor,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Upcoming Events',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+              const Spacer(),
+              if (_isSyncingGoogleEvents)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_googleUpcomingEvents.isEmpty)
+            Text(
+              'No upcoming events synced yet.',
+              style: TextStyle(fontSize: 12, color: colors.textMuted),
+            )
+          else
+            ..._googleUpcomingEvents.take(3).map((event) {
+              final title = (event['summary'] as String?)?.trim();
+              final start = (event['start_iso'] as String?)?.trim();
+              final formattedStart = _formatEventDateTime(start);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 3),
+                      child: Icon(
+                        Icons.circle,
+                        size: 8,
+                        color: AppTheme.primaryColor,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        formattedStart != null
+                            ? '${title ?? 'Untitled'} • $formattedStart'
+                            : (title ?? 'Untitled'),
+                        style: TextStyle(fontSize: 12, color: colors.textBody),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  String? _formatEventDateTime(String? isoValue) {
+    if (isoValue == null || isoValue.isEmpty) {
+      return null;
+    }
+
+    final parsed = DateTime.tryParse(isoValue);
+    if (parsed == null) {
+      return isoValue;
+    }
+
+    final local = parsed.toLocal();
+    return DateFormat('MMM d, h:mm a').format(local);
+  }
+
+  void _showLoadingDialog(String message) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.cardColor,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(color: AppTheme.primaryColor),
+            const SizedBox(height: 16),
+            Text(message),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showSnack(String message, {bool success = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: success ? Colors.green : Colors.blueGrey,
+      ),
+    );
   }
 
   // ── Helpers ──

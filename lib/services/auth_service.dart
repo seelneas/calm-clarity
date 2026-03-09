@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:google_sign_in/google_sign_in.dart';
@@ -26,6 +27,22 @@ class AuthService {
         : null,
     scopes: ['email', 'profile'],
   );
+
+  static final GoogleSignIn _googleCalendarSignIn = GoogleSignIn(
+    clientId: kIsWeb && googleWebClientId.isNotEmpty
+        ? googleWebClientId
+        : null,
+    scopes: [
+      'email',
+      'profile',
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/calendar.readonly',
+    ],
+  );
+
+  static Timer? _googleCalendarSyncTimer;
+  static bool _googleCalendarSyncInFlight = false;
+  static Duration _googleCalendarSyncInterval = const Duration(minutes: 5);
 
   static Future<Map<String, dynamic>> signup(String name, String email, String password) async {
     try {
@@ -140,6 +157,331 @@ class AuthService {
     }
   }
 
+  static Future<String?> _ensureCalendarAccessToken({
+    bool allowInteractive = true,
+  }) async {
+    GoogleSignInAccount? account = _googleCalendarSignIn.currentUser;
+    account ??= await _googleCalendarSignIn.signInSilently();
+    if (allowInteractive) {
+      account ??= await _googleCalendarSignIn.signIn();
+    }
+    if (account == null) {
+      return null;
+    }
+
+    final auth = await account.authentication;
+    return auth.accessToken;
+  }
+
+  static Future<Map<String, dynamic>> connectGoogleCalendar() async {
+    try {
+      final appToken = await PreferencesService.getAuthToken();
+      if (appToken == null || appToken.isEmpty) {
+        return {'success': false, 'message': 'Sign in required'};
+      }
+
+      final googleAccessToken = await _ensureCalendarAccessToken();
+      if (googleAccessToken == null || googleAccessToken.isEmpty) {
+        return {'success': false, 'message': 'Google Calendar authorization cancelled'};
+      }
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/integrations/google-calendar/connect'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $appToken',
+        },
+        body: jsonEncode({'access_token': googleAccessToken}),
+      );
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        await PreferencesService.setGoogleCalendarConnected(true);
+        await startGoogleCalendarAutoSyncIfEnabled();
+        return {
+          'success': true,
+          'message': data['message'] ?? 'Google Calendar connected',
+          'access_token': googleAccessToken,
+        };
+      }
+
+      return {'success': false, 'message': data['detail'] ?? 'Google Calendar connection failed'};
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> disconnectGoogleCalendar() async {
+    try {
+      final appToken = await PreferencesService.getAuthToken();
+      if (appToken == null || appToken.isEmpty) {
+        return {'success': false, 'message': 'Sign in required'};
+      }
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/integrations/google-calendar/disconnect'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $appToken',
+        },
+      );
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        await PreferencesService.setGoogleCalendarConnected(false);
+        await stopGoogleCalendarAutoSyncLoop();
+        await _googleCalendarSignIn.disconnect().catchError((_) async {
+          await _googleCalendarSignIn.signOut();
+          return null;
+        });
+        return {'success': true, 'message': data['message'] ?? 'Google Calendar disconnected'};
+      }
+
+      return {'success': false, 'message': data['detail'] ?? 'Disconnect failed'};
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> fetchGoogleCalendarEvents() async {
+    try {
+      final appToken = await PreferencesService.getAuthToken();
+      if (appToken == null || appToken.isEmpty) {
+        return {'success': false, 'message': 'Sign in required'};
+      }
+
+      final googleAccessToken = await _ensureCalendarAccessToken();
+      if (googleAccessToken == null || googleAccessToken.isEmpty) {
+        return {'success': false, 'message': 'Google Calendar authorization required'};
+      }
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/integrations/google-calendar/events'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $appToken',
+        },
+        body: jsonEncode({'access_token': googleAccessToken}),
+      );
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'connected': data['connected'] == true,
+          'events': List<Map<String, dynamic>>.from(data['events'] ?? const []),
+        };
+      }
+
+      return {'success': false, 'message': data['detail'] ?? 'Failed to fetch events'};
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> getGoogleCalendarSyncStatus() async {
+    try {
+      final appToken = await PreferencesService.getAuthToken();
+      if (appToken == null || appToken.isEmpty) {
+        return {'success': false, 'message': 'Sign in required'};
+      }
+
+      final response = await http.get(
+        Uri.parse('$baseUrl/integrations/google-calendar/sync/status'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $appToken',
+        },
+      );
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return {'success': true, ...Map<String, dynamic>.from(data)};
+      }
+      return {'success': false, 'message': data['detail'] ?? 'Failed to fetch sync status'};
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> updateGoogleCalendarSyncSettings({
+    required bool autoSyncEnabled,
+    required int syncIntervalMinutes,
+  }) async {
+    try {
+      final appToken = await PreferencesService.getAuthToken();
+      if (appToken == null || appToken.isEmpty) {
+        return {'success': false, 'message': 'Sign in required'};
+      }
+
+      final response = await http.put(
+        Uri.parse('$baseUrl/integrations/google-calendar/sync/settings'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $appToken',
+        },
+        body: jsonEncode({
+          'auto_sync_enabled': autoSyncEnabled,
+          'sync_interval_minutes': syncIntervalMinutes,
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return {'success': true, ...Map<String, dynamic>.from(data)};
+      }
+      return {'success': false, 'message': data['detail'] ?? 'Failed to update sync settings'};
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> runGoogleCalendarSync({
+    List<Map<String, dynamic>> localChanges = const [],
+    bool allowInteractive = true,
+  }) async {
+    try {
+      final appToken = await PreferencesService.getAuthToken();
+      if (appToken == null || appToken.isEmpty) {
+        return {'success': false, 'message': 'Sign in required'};
+      }
+
+      final googleAccessToken = await _ensureCalendarAccessToken(
+        allowInteractive: allowInteractive,
+      );
+      if (googleAccessToken == null || googleAccessToken.isEmpty) {
+        return {'success': false, 'message': 'Google Calendar authorization required'};
+      }
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/integrations/google-calendar/sync/run'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $appToken',
+        },
+        body: jsonEncode({
+          'access_token': googleAccessToken,
+          'local_changes': localChanges,
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return {'success': true, ...Map<String, dynamic>.from(data)};
+      }
+      return {'success': false, 'message': data['detail'] ?? 'Failed to run calendar sync'};
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<void> _runGoogleCalendarAutoSyncTick() async {
+    if (_googleCalendarSyncInFlight) {
+      return;
+    }
+    _googleCalendarSyncInFlight = true;
+    try {
+      final authenticated = await PreferencesService.isAuthenticated();
+      final connected = await PreferencesService.isGoogleCalendarConnected();
+      final autoSyncEnabled = await PreferencesService.isAutoSyncEnabled();
+      if (!authenticated || !connected || !autoSyncEnabled) {
+        await stopGoogleCalendarAutoSyncLoop();
+        return;
+      }
+
+      final status = await getGoogleCalendarSyncStatus();
+      if (status['success'] == true && status['auto_sync_enabled'] == false) {
+        await stopGoogleCalendarAutoSyncLoop();
+        return;
+      }
+
+      await runGoogleCalendarSync(allowInteractive: false);
+    } catch (_) {
+    } finally {
+      _googleCalendarSyncInFlight = false;
+    }
+  }
+
+  static Future<void> startGoogleCalendarAutoSyncIfEnabled() async {
+    await stopGoogleCalendarAutoSyncLoop();
+
+    final connected = await PreferencesService.isGoogleCalendarConnected();
+    final autoSyncEnabled = await PreferencesService.isAutoSyncEnabled();
+    if (!connected || !autoSyncEnabled) {
+      return;
+    }
+
+    final status = await getGoogleCalendarSyncStatus();
+    if (status['success'] == true) {
+      final backendEnabled = status['auto_sync_enabled'] == true;
+      if (!backendEnabled) {
+        return;
+      }
+      final interval = (status['sync_interval_minutes'] as num?)?.toInt() ?? 5;
+      _googleCalendarSyncInterval = Duration(minutes: interval.clamp(1, 60));
+    } else {
+      _googleCalendarSyncInterval = const Duration(minutes: 5);
+    }
+
+    await _runGoogleCalendarAutoSyncTick();
+    _googleCalendarSyncTimer = Timer.periodic(
+      _googleCalendarSyncInterval,
+      (_) {
+        unawaited(_runGoogleCalendarAutoSyncTick());
+      },
+    );
+  }
+
+  static Future<void> stopGoogleCalendarAutoSyncLoop() async {
+    _googleCalendarSyncTimer?.cancel();
+    _googleCalendarSyncTimer = null;
+    _googleCalendarSyncInFlight = false;
+  }
+
+  static Future<Map<String, dynamic>> createGoogleCalendarFocusEvent() async {
+    try {
+      final appToken = await PreferencesService.getAuthToken();
+      if (appToken == null || appToken.isEmpty) {
+        return {'success': false, 'message': 'Sign in required'};
+      }
+
+      final googleAccessToken = await _ensureCalendarAccessToken();
+      if (googleAccessToken == null || googleAccessToken.isEmpty) {
+        return {'success': false, 'message': 'Google Calendar authorization required'};
+      }
+
+      final start = DateTime.now().add(const Duration(minutes: 15));
+      final end = start.add(const Duration(minutes: 30));
+      final response = await http.post(
+        Uri.parse('$baseUrl/integrations/google-calendar/events/create'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $appToken',
+        },
+        body: jsonEncode({
+          'access_token': googleAccessToken,
+          'summary': 'Calm Clarity Focus Session',
+          'description': 'A mindful check-in session generated from Calm Clarity.',
+          'start_iso': start.toUtc().toIso8601String(),
+          'end_iso': end.toUtc().toIso8601String(),
+          'timezone': 'UTC',
+        }),
+      );
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'event': Map<String, dynamic>.from(data),
+        };
+      }
+
+      return {'success': false, 'message': data['detail'] ?? 'Failed to create event'};
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
   static Future<Map<String, dynamic>> forgotPassword(String email) async {
     try {
       final response = await http.post(
@@ -212,6 +554,7 @@ class AuthService {
   }
 
   static Future<void> logout() async {
+    await stopGoogleCalendarAutoSyncLoop();
     await PreferencesService.setAuthToken('');
     await PreferencesService.setUserName('');
     await PreferencesService.setUserEmail('');

@@ -5,18 +5,23 @@ import 'theme.dart';
 import 'layout/app_layout.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/auth_screen.dart';
+import 'screens/admin_console_screen.dart';
 import 'screens/voice_recording_screen.dart';
 import 'screens/entry_detail_screen.dart';
 import 'screens/reset_password_screen.dart';
 import 'screens/settings_screen.dart';
 
 import 'services/preferences_service.dart';
+import 'services/notification_service.dart';
+import 'services/auth_service.dart';
 
 import 'providers/journal_provider.dart';
 import 'providers/theme_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.initialize();
+  await AuthService.startGoogleCalendarAutoSyncIfEnabled();
   final showOnboarding = await PreferencesService.shouldShowOnboarding();
   final isAuthenticated = await PreferencesService.isAuthenticated();
   
@@ -106,6 +111,7 @@ class CalmClarityApp extends StatelessWidget {
             '/home': (context) => const AppLayout(),
             '/voice_recording': (context) => const VoiceRecordingScreen(),
             '/settings': (context) => const SettingsScreen(),
+            '/admin': (context) => const AdminConsoleScreen(),
           },
           onGenerateRoute: (settings) {
             if (settings.name == '/entry_detail') {

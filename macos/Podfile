@@ -1,4 +1,4 @@
-platform :osx, '10.15'
+platform :osx, '11.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -23,6 +23,26 @@ def flutter_root
 end
 
 require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+def flutter_parse_xcconfig_file(file)
+  file_abs_path = File.expand_path(file)
+  return [] unless File.exist?(file_abs_path)
+
+  entries = {}
+  skip_line_start_symbols = ['#', '/']
+  File.foreach(file_abs_path) do |line|
+    next if skip_line_start_symbols.any? { |symbol| line =~ /^\s*#{symbol}/ }
+
+    key_value_pair = line.split('=', 2)
+    if key_value_pair.length == 2
+      entries[key_value_pair[0].strip] = key_value_pair[1].strip
+    else
+      puts "Invalid key/value pair: #{line}"
+    end
+  end
+
+  entries
+end
 
 flutter_macos_podfile_setup
 

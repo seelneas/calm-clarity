@@ -49,5 +49,9 @@
 	<string>Calm Clarity uses the microphone to record your voice journal entries.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Calm Clarity uses speech recognition to transcribe your voice journal in real time.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

@@ -8,3 +8,7 @@ google-auth
 python-dotenv
 python-multipart
 requests
+redis
+rq
+sentence-transformers
+pytest

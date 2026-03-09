@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../theme.dart';
 import '../providers/journal_provider.dart';
 import '../models/journal_entry.dart';
+import '../widgets/guest_mode_banner.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -11,7 +12,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen>
+    with SingleTickerProviderStateMixin {
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
@@ -58,10 +60,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           color: AppTheme.primaryColor.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: const Icon(Icons.graphic_eq, color: AppTheme.primaryColor),
+                        child: const Icon(
+                          Icons.graphic_eq,
+                          color: AppTheme.primaryColor,
+                        ),
                       ),
                       const SizedBox(width: 8),
-                       Text(
+                      Text(
                         'Calm Clarity',
                         style: TextStyle(
                           fontSize: 20,
@@ -83,7 +88,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             shape: BoxShape.circle,
                             border: Border.all(color: colors.subtleBorder),
                           ),
-                          child: Icon(Icons.settings_outlined, color: colors.iconDefault, size: 20),
+                          child: Icon(
+                            Icons.settings_outlined,
+                            color: colors.iconDefault,
+                            size: 20,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -105,7 +114,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             shape: BoxShape.circle,
                             border: Border.all(color: colors.subtleBorder),
                           ),
-                          child: Icon(Icons.notifications_none, color: colors.iconDefault, size: 20),
+                          child: Icon(
+                            Icons.notifications_none,
+                            color: colors.iconDefault,
+                            size: 20,
+                          ),
                         ),
                       ),
                     ],
@@ -113,14 +126,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 ],
               ),
               const SizedBox(height: 24),
+              const GuestModeBanner(
+                subtitle:
+                    'You are using Calm Clarity as a guest. Create an account to keep your progress and sync history.',
+              ),
+              const SizedBox(height: 16),
               Consumer<JournalProvider>(
                 builder: (context, journalProvider, child) {
                   return Row(
                     children: [
-                      Expanded(
-                        flex: 2,
-                        child: _buildMoodCard(journalProvider),
-                      ),
+                      Expanded(flex: 2, child: _buildMoodCard(journalProvider)),
                       const SizedBox(width: 16),
                       Expanded(
                         flex: 1,
@@ -132,9 +147,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ),
               const SizedBox(height: 48),
               // Mic Button
-              Center(
-                child: _buildMicButton(),
-              ),
+              Center(child: _buildMicButton()),
               const SizedBox(height: 48),
               // Action Items
               Consumer<JournalProvider>(
@@ -167,9 +180,18 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             final item = entry.value;
                             return Column(
                               children: [
-                                _buildTaskItem(journalProvider, item.entryId, item.id, item.description, item.isCompleted),
+                                _buildTaskItem(
+                                  journalProvider,
+                                  item.entryId,
+                                  item.id,
+                                  item.description,
+                                  item.isCompleted,
+                                ),
                                 if (idx < actionItems.length - 1)
-                                  Divider(color: colors.subtleBorder, height: 1),
+                                  Divider(
+                                    color: colors.subtleBorder,
+                                    height: 1,
+                                  ),
                               ],
                             );
                           }).toList(),
@@ -183,22 +205,35 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               // Recent Entries
               Consumer<JournalProvider>(
                 builder: (context, journalProvider, child) {
-                  final recentEntries = journalProvider.entries.take(2).toList();
+                  final recentEntries = journalProvider.entries
+                      .take(2)
+                      .toList();
                   if (recentEntries.isEmpty) return const SizedBox.shrink();
 
                   return Column(
                     children: [
-                      _buildSectionHeader('RECENT ENTRIES', null, icon: Icons.history),
+                      _buildSectionHeader(
+                        'RECENT ENTRIES',
+                        null,
+                        icon: Icons.history,
+                      ),
                       const SizedBox(height: 12),
                       ...recentEntries.map((entry) {
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 16.0),
                           child: GestureDetector(
-                            onTap: () => Navigator.pushNamed(context, '/entry_detail', arguments: entry.id),
+                            onTap: () => Navigator.pushNamed(
+                              context,
+                              '/entry_detail',
+                              arguments: entry.id,
+                            ),
                             child: _buildRecentEntry(
-                              title: entry.summary.isNotEmpty ? entry.summary : 'Untitled Entry',
+                              title: entry.summary.isNotEmpty
+                                  ? entry.summary
+                                  : 'Untitled Entry',
                               time: _formatTimeAgo(entry.timestamp),
-                              duration: 'Mood: ${entry.mood.toString().split('.').last}',
+                              duration:
+                                  'Mood: ${entry.mood.toString().split('.').last}',
                               icon: _getMoodIcon(entry.mood),
                               iconColor: _getMoodColor(entry.mood),
                             ),
@@ -249,7 +284,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   children: [
                     Icon(
                       isPositive ? Icons.trending_up : Icons.trending_down,
-                      color: isPositive ? AppTheme.primaryColor : Colors.redAccent,
+                      color: isPositive
+                          ? AppTheme.primaryColor
+                          : Colors.redAccent,
                       size: 14,
                     ),
                     const SizedBox(width: 4),
@@ -258,7 +295,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: isPositive ? AppTheme.primaryColor : Colors.redAccent,
+                        color: isPositive
+                            ? AppTheme.primaryColor
+                            : Colors.redAccent,
                       ),
                     ),
                   ],
@@ -270,14 +309,21 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             crossAxisAlignment: CrossAxisAlignment.end,
             children: List.generate(7, (index) {
               final day = DateTime.now().subtract(Duration(days: 6 - index));
-              final dayEntries = provider.entries.where((e) =>
-                e.timestamp.year == day.year &&
-                e.timestamp.month == day.month &&
-                e.timestamp.day == day.day).toList();
-              
+              final dayEntries = provider.entries
+                  .where(
+                    (e) =>
+                        e.timestamp.year == day.year &&
+                        e.timestamp.month == day.month &&
+                        e.timestamp.day == day.day,
+                  )
+                  .toList();
+
               double avgScore = 0;
               if (dayEntries.isNotEmpty) {
-                final total = dayEntries.fold<double>(0, (sum, e) => sum + _moodToDouble(e.mood));
+                final total = dayEntries.fold<double>(
+                  0,
+                  (sum, e) => sum + _moodToDouble(e.mood),
+                );
                 avgScore = total / dayEntries.length;
               }
 
@@ -289,8 +335,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                   margin: const EdgeInsets.symmetric(horizontal: 2),
                   height: height,
                   decoration: BoxDecoration(
-                    color: AppTheme.primaryColor.withValues(alpha: avgScore > 0 ? (index == 6 ? 1.0 : 0.6) : 0.1),
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(2)),
+                    color: AppTheme.primaryColor.withValues(
+                      alpha: avgScore > 0 ? (index == 6 ? 1.0 : 0.6) : 0.1,
+                    ),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(2),
+                    ),
                   ),
                 ),
               );
@@ -303,11 +353,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
   double _moodToDouble(Mood mood) {
     switch (mood) {
-      case Mood.veryGood: return 5.0;
-      case Mood.good: return 4.0;
-      case Mood.neutral: return 3.0;
-      case Mood.bad: return 2.0;
-      case Mood.veryBad: return 1.0;
+      case Mood.veryGood:
+        return 5.0;
+      case Mood.good:
+        return 4.0;
+      case Mood.neutral:
+        return 3.0;
+      case Mood.bad:
+        return 2.0;
+      case Mood.veryBad:
+        return 1.0;
     }
   }
 
@@ -335,7 +390,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.local_fire_department, color: Colors.orange, size: 28),
+              const Icon(
+                Icons.local_fire_department,
+                color: Colors.orange,
+                size: 28,
+              ),
               const SizedBox(width: 4),
               Text(
                 streak.toString(),
@@ -374,7 +433,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               decoration: BoxDecoration(
                 color: AppTheme.primaryColor,
                 shape: BoxShape.circle,
-                border: Border.all(color: Theme.of(context).scaffoldBackgroundColor, width: 8),
+                border: Border.all(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  width: 8,
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: AppTheme.primaryColor.withValues(alpha: 0.3),
@@ -410,7 +472,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-  Widget _buildSectionHeader(String title, String? action, {IconData? icon, VoidCallback? onActionTap}) {
+  Widget _buildSectionHeader(
+    String title,
+    String? action, {
+    IconData? icon,
+    VoidCallback? onActionTap,
+  }) {
     final colors = Theme.of(context).extension<AppColors>()!;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -428,7 +495,11 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             ),
             if (icon != null) ...[
               const SizedBox(width: 8),
-              Icon(icon, size: 16, color: colors.textMuted.withValues(alpha: 0.5)),
+              Icon(
+                icon,
+                size: 16,
+                color: colors.textMuted.withValues(alpha: 0.5),
+              ),
             ],
           ],
         ),
@@ -466,8 +537,12 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
             height: MediaQuery.of(context).size.height * 0.7,
             decoration: BoxDecoration(
               color: colors.sheetBackground,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
-              border: Border.all(color: AppTheme.primaryColor.withValues(alpha: 0.2)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(32),
+              ),
+              border: Border.all(
+                color: AppTheme.primaryColor.withValues(alpha: 0.2),
+              ),
             ),
             child: Column(
               children: [
@@ -516,9 +591,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           ),
                         )
                       : ListView.separated(
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 8,
+                          ),
                           itemCount: allItems.length,
-                          separatorBuilder: (context, index) => const SizedBox(height: 12),
+                          separatorBuilder: (context, index) =>
+                              const SizedBox(height: 12),
                           itemBuilder: (context, index) {
                             final item = allItems[index];
                             return Container(
@@ -547,9 +626,13 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
   }
 
-
-
-  Widget _buildTaskItem(JournalProvider provider, String entryId, String itemId, String text, bool completed) {
+  Widget _buildTaskItem(
+    JournalProvider provider,
+    String entryId,
+    String itemId,
+    String text,
+    bool completed,
+  ) {
     final colors = Theme.of(context).extension<AppColors>()!;
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -563,9 +646,16 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: completed ? AppTheme.primaryColor : Colors.transparent,
-                border: Border.all(color: completed ? AppTheme.primaryColor : colors.textMuted.withValues(alpha: 0.5), width: 2),
+                border: Border.all(
+                  color: completed
+                      ? AppTheme.primaryColor
+                      : colors.textMuted.withValues(alpha: 0.5),
+                  width: 2,
+                ),
               ),
-              child: completed ? Icon(Icons.check, size: 16, color: colors.onPrimaryText) : null,
+              child: completed
+                  ? Icon(Icons.check, size: 16, color: colors.onPrimaryText)
+                  : null,
             ),
           ),
           const SizedBox(width: 16),
@@ -664,11 +754,28 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    Text(time, style: TextStyle(fontSize: 12, color: colors.textMuted)),
+                    Text(
+                      time,
+                      style: TextStyle(fontSize: 12, color: colors.textMuted),
+                    ),
                     const SizedBox(width: 8),
-                    Container(width: 4, height: 4, decoration: BoxDecoration(color: colors.textMuted, shape: BoxShape.circle)),
+                    Container(
+                      width: 4,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: colors.textMuted,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
                     const SizedBox(width: 8),
-                    Text(duration, style: TextStyle(fontSize: 12, color: colors.textMuted, fontStyle: FontStyle.italic)),
+                    Text(
+                      duration,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.textMuted,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
                   ],
                 ),
               ],

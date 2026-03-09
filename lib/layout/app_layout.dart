@@ -3,6 +3,8 @@ import '../screens/home_screen.dart';
 import '../screens/history_screen.dart';
 import '../screens/insights_screen.dart';
 import '../screens/profile_screen.dart';
+import '../screens/admin_console_screen.dart';
+import '../services/ai_admin_service.dart';
 
 class AppLayout extends StatefulWidget {
   const AppLayout({super.key});
@@ -13,13 +15,79 @@ class AppLayout extends StatefulWidget {
 
 class _AppLayoutState extends State<AppLayout> {
   int _selectedIndex = 0;
+  bool _isAdminUser = false;
 
-  static const List<Widget> _screens = [
-    HomeScreen(),
-    HistoryScreen(),
-    InsightsScreen(),
-    ProfileScreen(),
-  ];
+  List<Widget> get _screens {
+    final base = <Widget>[
+      const HomeScreen(),
+      const HistoryScreen(),
+      const InsightsScreen(),
+      const ProfileScreen(),
+    ];
+    if (_isAdminUser) {
+      base.add(const AdminConsoleScreen());
+    }
+    return base;
+  }
+
+  List<BottomNavigationBarItem> get _items {
+    final base = <BottomNavigationBarItem>[
+      const BottomNavigationBarItem(
+        icon: Icon(Icons.home_outlined),
+        activeIcon: Icon(Icons.home, color: Color(0xFF25D4E4)),
+        label: 'HOME',
+      ),
+      const BottomNavigationBarItem(
+        icon: Icon(Icons.history_outlined),
+        activeIcon: Icon(Icons.history, color: Color(0xFF25D4E4)),
+        label: 'HISTORY',
+      ),
+      const BottomNavigationBarItem(
+        icon: Icon(Icons.insights_outlined),
+        activeIcon: Icon(Icons.insights, color: Color(0xFF25D4E4)),
+        label: 'INSIGHTS',
+      ),
+      const BottomNavigationBarItem(
+        icon: Icon(Icons.person_outline),
+        activeIcon: Icon(Icons.person, color: Color(0xFF25D4E4)),
+        label: 'PROFILE',
+      ),
+    ];
+    if (_isAdminUser) {
+      base.add(
+        const BottomNavigationBarItem(
+          icon: Icon(Icons.admin_panel_settings_outlined),
+          activeIcon:
+              Icon(Icons.admin_panel_settings, color: Color(0xFF25D4E4)),
+          label: 'ADMIN',
+        ),
+      );
+    }
+    return base;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAdminAccess();
+  }
+
+  Future<void> _loadAdminAccess() async {
+    final access = await AIAdminService.checkAdminAccess();
+    if (!mounted) return;
+
+    final isAdmin = access['is_admin'] == true;
+    if (_isAdminUser == isAdmin) {
+      return;
+    }
+
+    setState(() {
+      _isAdminUser = isAdmin;
+      if (_selectedIndex >= _screens.length) {
+        _selectedIndex = _screens.length - 1;
+      }
+    });
+  }
 
   void _onItemTapped(int index) {
     setState(() {
@@ -60,28 +128,7 @@ class _AppLayoutState extends State<AppLayout> {
             fontWeight: FontWeight.bold,
             letterSpacing: 1.2,
           ),
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.home_outlined),
-              activeIcon: Icon(Icons.home, color: Color(0xFF25D4E4)),
-              label: 'HOME',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.history_outlined),
-              activeIcon: Icon(Icons.history, color: Color(0xFF25D4E4)),
-              label: 'HISTORY',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.insights_outlined),
-              activeIcon: Icon(Icons.insights, color: Color(0xFF25D4E4)),
-              label: 'INSIGHTS',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.person_outline),
-              activeIcon: Icon(Icons.person, color: Color(0xFF25D4E4)),
-              label: 'PROFILE',
-            ),
-          ],
+          items: _items,
         ),
       ),
     );

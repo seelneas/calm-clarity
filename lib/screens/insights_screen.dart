@@ -554,6 +554,13 @@ class _InsightsScreenState extends State<InsightsScreen>
     });
   }
 
+  void _retryWeeklyInsights() {
+    setState(() {
+      _weeklyInsightsKey = '';
+      _weeklyInsightsFuture = null;
+    });
+  }
+
   double _computeAiCoverage(List<JournalEntry> entries) {
     if (entries.isEmpty) return 0;
     final withAi = entries.where((entry) {
@@ -637,13 +644,37 @@ class _InsightsScreenState extends State<InsightsScreen>
 
         final data = snapshot.data;
         if (data == null || data['success'] != true) {
-          final message = data?['message'] as String?;
-          return _buildInsightCard(
-            message?.isNotEmpty == true
-                ? message!
-                : 'AI weekly coaching is unavailable right now.',
+          final errorCode = (data?['error_code'] ?? '').toString();
+          final message = (data?['user_message'] ?? data?['message'] ??
+                  'AI weekly coaching is unavailable right now.')
+              .toString();
+
+          if (errorCode == 'ai_disabled') {
+            return _buildInsightCardWithAction(
+              message,
+              Icons.tune,
+              Colors.blueGrey,
+              actionLabel: 'Open Settings',
+              onAction: () => Navigator.pushNamed(context, '/settings'),
+            );
+          }
+
+          if (errorCode == 'quota_reached') {
+            return _buildInsightCardWithAction(
+              message,
+              Icons.hourglass_top,
+              Colors.orangeAccent,
+              actionLabel: 'Retry Later',
+              onAction: _retryWeeklyInsights,
+            );
+          }
+
+          return _buildInsightCardWithAction(
+            message,
             Icons.error_outline,
             Colors.blueGrey,
+            actionLabel: 'Retry',
+            onAction: _retryWeeklyInsights,
           );
         }
 
@@ -661,7 +692,8 @@ class _InsightsScreenState extends State<InsightsScreen>
         final memorySnippets = List<String>.from(
           data['memory_snippets_used'] ?? const [],
         );
-        final safetyFlag = data['safety_flag'] == true;
+        final safetyFlag =
+            data['safety_flag'] == true || data['is_blocked'] == true;
         final crisisResources = List<String>.from(
           data['crisis_resources'] ?? const [],
         );
@@ -704,6 +736,21 @@ class _InsightsScreenState extends State<InsightsScreen>
                   style: TextStyle(
                     fontSize: 13,
                     color: Theme.of(context).extension<AppColors>()!.textBody,
+                  ),
+                ),
+              ],
+              if (safetyFlag) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.redAccent.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    'Safety mode is active for this insight. Support resources are shown below.',
+                    style: TextStyle(fontSize: 12, color: Colors.redAccent),
                   ),
                 ),
               ],
@@ -1032,6 +1079,64 @@ class _InsightsScreenState extends State<InsightsScreen>
                 color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.7),
                 height: 1.5,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInsightCardWithAction(
+    String text,
+    IconData icon,
+    Color color, {
+    required String actionLabel,
+    required VoidCallback onAction,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.cardColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.blueGrey.withValues(alpha: 0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: color, size: 20),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  text,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.7),
+                    height: 1.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: onAction,
+              icon: const Icon(Icons.arrow_forward, size: 16),
+              label: Text(actionLabel),
             ),
           ),
         ],

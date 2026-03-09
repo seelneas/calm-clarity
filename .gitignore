@@ -57,8 +57,21 @@ backend/.env.*
 **/__pycache__/
 *.pyo
 *.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 backend/venv/
+backend/.venv/
 venv/
+.venv/
+
+# Backend/runtime local artifacts
+backend/dump.rdb
+*.rdb
+backend/*.pid
+backend/*.log
 
 # VS Code local settings
 .vscode/

@@ -1,10 +1,17 @@
 import 'dart:io';
+import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../theme.dart';
 import 'package:provider/provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/preferences_service.dart';
+import '../services/notification_service.dart';
+import '../services/auth_service.dart';
+import '../services/account_access_service.dart';
+import '../widgets/guest_mode_banner.dart';
+import 'notification_diagnostics_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -15,7 +22,10 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _notificationsEnabled = true;
-  bool _aiProcessingEnabled = false;
+  bool _notificationsPermissionGranted = false;
+  bool _dailyReminderEnabled = false;
+  TimeOfDay _dailyReminderTime = const TimeOfDay(hour: 20, minute: 0);
+  bool _isSyncingNotifications = false;
   String? _lastBackupDate;
 
   @override
@@ -26,27 +36,132 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadPreferences() async {
     final notifs = await PreferencesService.isNotificationsEnabled();
-    final aiEnabled = await PreferencesService.isAiProcessingEnabled();
+    final reminderEnabled = await PreferencesService.isDailyReminderEnabled();
+    final reminderHour = await PreferencesService.getDailyReminderHour();
+    final reminderMinute = await PreferencesService.getDailyReminderMinute();
+    final permissionGranted =
+        await NotificationService.areNotificationsGranted();
     final lastBackup = await PreferencesService.getLastBackupDate();
     if (mounted) {
       setState(() {
         _notificationsEnabled = notifs;
-        _aiProcessingEnabled = aiEnabled;
+        _dailyReminderEnabled = reminderEnabled;
+        _dailyReminderTime = TimeOfDay(
+          hour: reminderHour,
+          minute: reminderMinute,
+        );
+        _notificationsPermissionGranted = permissionGranted;
         _lastBackupDate = lastBackup;
       });
     }
+
+    await _syncNotificationSettingsFromBackend();
   }
 
   Future<void> _setNotificationsEnabled(bool enabled) async {
+    if (enabled) {
+      final granted =
+          await NotificationService.requestNotificationPermissions();
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Notification permission is required to enable alerts.',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          setState(() => _notificationsPermissionGranted = false);
+        }
+        return;
+      }
+    }
+
     if (!mounted) return;
     setState(() => _notificationsEnabled = enabled);
-    await PreferencesService.setNotificationsEnabled(enabled);
+    await NotificationService.setNotificationsEnabled(enabled);
+
+    final granted = await NotificationService.areNotificationsGranted();
+    if (!mounted) return;
+    setState(() => _notificationsPermissionGranted = granted);
   }
 
-  Future<void> _setAiProcessingEnabled(bool enabled) async {
+  Future<void> _setDailyReminderEnabled(bool enabled) async {
+    if (!_notificationsEnabled) {
+      await _setNotificationsEnabled(true);
+      if (!_notificationsEnabled) {
+        return;
+      }
+    }
+
+    if (enabled) {
+      await NotificationService.scheduleDailyReminder(
+        hour: _dailyReminderTime.hour,
+        minute: _dailyReminderTime.minute,
+      );
+    } else {
+      await NotificationService.cancelDailyReminder();
+    }
+
     if (!mounted) return;
-    setState(() => _aiProcessingEnabled = enabled);
-    await PreferencesService.setAiProcessingEnabled(enabled);
+    setState(() => _dailyReminderEnabled = enabled);
+  }
+
+  Future<void> _pickDailyReminderTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _dailyReminderTime,
+    );
+    if (picked == null) {
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => _dailyReminderTime = picked);
+
+    await PreferencesService.setDailyReminderHour(picked.hour);
+    await PreferencesService.setDailyReminderMinute(picked.minute);
+    if (_dailyReminderEnabled) {
+      await NotificationService.scheduleDailyReminder(
+        hour: picked.hour,
+        minute: picked.minute,
+      );
+    } else {
+      await NotificationService.syncPreferencesToBackend(
+        dailyReminderHour: picked.hour,
+        dailyReminderMinute: picked.minute,
+      );
+    }
+  }
+
+  Future<void> _syncNotificationSettingsFromBackend() async {
+    final isAuthenticated = await PreferencesService.isAuthenticated();
+    if (!isAuthenticated) {
+      return;
+    }
+
+    if (_isSyncingNotifications) return;
+    setState(() => _isSyncingNotifications = true);
+
+    final backend = await NotificationService.fetchPreferencesFromBackend();
+    if (backend['success'] == true && mounted) {
+      final hour = (backend['daily_reminder_hour'] as num?)?.toInt() ?? 20;
+      final minute = (backend['daily_reminder_minute'] as num?)?.toInt() ?? 0;
+      setState(() {
+        _notificationsEnabled = backend['notifications_enabled'] == true;
+        _dailyReminderEnabled = backend['daily_reminder_enabled'] == true;
+        _dailyReminderTime = TimeOfDay(hour: hour, minute: minute);
+      });
+      await PreferencesService.setNotificationsEnabled(_notificationsEnabled);
+      await PreferencesService.setDailyReminderEnabled(_dailyReminderEnabled);
+      await PreferencesService.setDailyReminderHour(hour);
+      await PreferencesService.setDailyReminderMinute(minute);
+    }
+
+    if (mounted) {
+      setState(() => _isSyncingNotifications = false);
+    }
   }
 
   @override
@@ -62,18 +177,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
         backgroundColor: theme.scaffoldBackgroundColor,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+          icon: Icon(
+            Icons.arrow_back,
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+          ),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(
           'Settings',
-          style: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.bold),
+          style: TextStyle(
+            color: theme.colorScheme.onSurface,
+            fontWeight: FontWeight.bold,
+          ),
         ),
         centerTitle: true,
       ),
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         children: [
+          const GuestModeBanner(
+            subtitle:
+                'You are in guest mode. Create an account to back up settings and keep your data synced.',
+          ),
+          const SizedBox(height: 20),
           _buildSectionHeader('ACCOUNT'),
           _buildSettingsItem(
             context: context,
@@ -119,7 +245,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             context: context,
             icon: Icons.notifications_none_outlined,
             title: 'Notifications',
-            subtitle: 'Daily reminders and alerts',
+            subtitle: _notificationsPermissionGranted
+                ? 'Enabled for reminders and alerts'
+                : 'Permission required to send alerts',
             trailing: Switch(
               value: _notificationsEnabled,
               onChanged: (v) => _setNotificationsEnabled(v),
@@ -129,17 +257,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _buildSettingsItem(
             context: context,
-            icon: Icons.psychology_alt_outlined,
-            title: 'AI Processing',
-            subtitle: _aiProcessingEnabled
-                ? 'Enabled: entries may be sent for AI analysis'
-                : 'Disabled: keep all journal text local only',
+            icon: Icons.schedule,
+            title: 'Daily Reminder',
+            subtitle: _dailyReminderEnabled
+                ? 'Scheduled at ${_dailyReminderTime.format(context)}'
+                : 'Off',
             trailing: Switch(
-              value: _aiProcessingEnabled,
-              onChanged: (v) => _setAiProcessingEnabled(v),
+              value: _dailyReminderEnabled,
+              onChanged: _notificationsEnabled
+                  ? (v) => _setDailyReminderEnabled(v)
+                  : null,
               activeThumbColor: AppTheme.primaryColor,
             ),
-            onTap: () => _setAiProcessingEnabled(!_aiProcessingEnabled),
+            onTap: () => _setDailyReminderEnabled(!_dailyReminderEnabled),
+          ),
+          _buildSettingsItem(
+            context: context,
+            icon: Icons.access_time,
+            title: 'Reminder Time',
+            subtitle: _dailyReminderTime.format(context),
+            onTap: _pickDailyReminderTime,
+          ),
+          _buildSettingsItem(
+            context: context,
+            icon: Icons.notifications_active_outlined,
+            title: 'Send Test Notification',
+            subtitle: _isSyncingNotifications
+                ? 'Syncing notification preferences...'
+                : 'Send a test local and push notification now',
+            onTap: () async {
+              await NotificationService.showInstantLocalNotification(
+                title: 'Test notification',
+                body: 'Your Calm Clarity notifications are working.',
+              );
+              await NotificationService.triggerBackendNotification(
+                eventType: 'manual_test',
+                title: 'Test notification',
+                body: 'Your Calm Clarity notifications are working.',
+                data: {'source': 'settings_test'},
+              );
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Test notification requested.'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+          ),
+          _buildSettingsItem(
+            context: context,
+            icon: Icons.monitor_heart_outlined,
+            title: 'Notification Diagnostics',
+            subtitle: 'Firebase readiness and delivery QA checks',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const NotificationDiagnosticsScreen(),
+                ),
+              );
+            },
           ),
           const SizedBox(height: 32),
           _buildSectionHeader('DATA'),
@@ -147,8 +325,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             context: context,
             icon: Icons.cloud_upload_outlined,
             title: 'Backup & Sync',
-            subtitle: _lastBackupDate != null ? 'Last backup: $_lastBackupDate' : 'Connect to cloud storage',
-            onTap: () => _showBackupDialog(context),
+            subtitle: _lastBackupDate != null
+                ? 'Last backup: $_lastBackupDate'
+                : 'Connect to cloud storage',
+            onTap: () async {
+              final allowed = await AccountAccessService.requireAccount(
+                context,
+                featureLabel: 'Backup & Sync',
+              );
+              if (!allowed) return;
+              if (!context.mounted) return;
+              _showBackupDialog(context);
+            },
           ),
           _buildSettingsItem(
             context: context,
@@ -157,7 +345,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             titleColor: Colors.redAccent,
             onTap: () {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Go to Profile tab to delete all data'), behavior: SnackBarBehavior.floating),
+                const SnackBar(
+                  content: Text('Go to Profile tab to delete all data'),
+                  behavior: SnackBarBehavior.floating,
+                ),
               );
             },
           ),
@@ -167,13 +358,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             context: context,
             icon: Icons.help_outline,
             title: 'Help Center',
-            onTap: () => _showInfoDialog(context, 'Help Center', 'Welcome to the Calm Clarity Help Center.\n\nHere you can find guides on how to use the journal, track your mood, and manage your action items.\n\nIf you need further assistance, please contact support@calmclarity.com.'),
+            onTap: () => _showInfoDialog(
+              context,
+              'Help Center',
+              'Welcome to the Calm Clarity Help Center.\n\nHere you can find guides on how to use the journal, track your mood, and manage your action items.\n\nIf you need further assistance, please contact support@calmclarity.com.',
+            ),
           ),
           _buildSettingsItem(
             context: context,
             icon: Icons.description_outlined,
             title: 'Terms & Conditions',
-            onTap: () => _showInfoDialog(context, 'Terms & Conditions', 'By using Calm Clarity, you agree to our terms of service.\n\nThe app is provided "as is" without any warranties. We are not responsible for any data loss, though we do our best to maintain the stability of the local database.\n\nPlease respect the community guidelines if you interact with any online features.'),
+            onTap: () => _showInfoDialog(
+              context,
+              'Terms & Conditions',
+              'By using Calm Clarity, you agree to our terms of service.\n\nThe app is provided "as is" without any warranties. We are not responsible for any data loss, though we do our best to maintain the stability of the local database.\n\nPlease respect the community guidelines if you interact with any online features.',
+            ),
           ),
           const SizedBox(height: 48),
           Center(
@@ -184,10 +383,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   style: TextStyle(color: colors.textMuted, fontSize: 12),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  'Developed with ❤️ by Antigravity',
-                  style: TextStyle(color: colors.textMuted.withValues(alpha: 0.5), fontSize: 10),
-                ),
               ],
             ),
           ),
@@ -213,7 +408,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showEditProfileDialog(BuildContext context, String currentName, String currentEmail, String? currentPhotoPath) {
+  void _showEditProfileDialog(
+    BuildContext context,
+    String currentName,
+    String currentEmail,
+    String? currentPhotoPath,
+  ) {
     final nameController = TextEditingController(text: currentName);
     final emailController = TextEditingController(text: currentEmail);
     String? photoPath = currentPhotoPath;
@@ -227,8 +427,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (context, setDialogState) {
           return AlertDialog(
             backgroundColor: theme.cardColor,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: Text('Edit Profile', style: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.bold)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: Text(
+              'Edit Profile',
+              style: TextStyle(
+                color: theme.colorScheme.onSurface,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -240,27 +448,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         height: 100,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          border: Border.all(color: AppTheme.primaryColor, width: 2),
+                          border: Border.all(
+                            color: AppTheme.primaryColor,
+                            width: 2,
+                          ),
                         ),
                         child: ClipOval(
                           child: photoPath != null
-                              ? Image.file(
-                                  File(photoPath!),
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Container(
-                                      color: theme.cardColor,
-                                      child: const Icon(Icons.person, color: AppTheme.primaryColor, size: 48),
-                                    );
-                                  },
-                                )
+                              ? (kIsWeb
+                                    ? Image.network(
+                                        photoPath!,
+                                        fit: BoxFit.cover,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                              return Container(
+                                                color: theme.cardColor,
+                                                child: const Icon(
+                                                  Icons.person,
+                                                  color: AppTheme.primaryColor,
+                                                  size: 48,
+                                                ),
+                                              );
+                                            },
+                                      )
+                                    : Image.file(
+                                        File(photoPath!),
+                                        fit: BoxFit.cover,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                              return Container(
+                                                color: theme.cardColor,
+                                                child: const Icon(
+                                                  Icons.person,
+                                                  color: AppTheme.primaryColor,
+                                                  size: 48,
+                                                ),
+                                              );
+                                            },
+                                      ))
                               : Image.network(
                                   'https://i.pravatar.cc/300',
                                   fit: BoxFit.cover,
                                   errorBuilder: (context, error, stackTrace) {
                                     return Container(
                                       color: theme.cardColor,
-                                      child: const Icon(Icons.person, color: AppTheme.primaryColor, size: 48),
+                                      child: const Icon(
+                                        Icons.person,
+                                        color: AppTheme.primaryColor,
+                                        size: 48,
+                                      ),
                                     );
                                   },
                                 ),
@@ -271,10 +507,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         right: 0,
                         child: GestureDetector(
                           onTap: () async {
-                            final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+                            final XFile? image = await picker.pickImage(
+                              source: ImageSource.gallery,
+                            );
                             if (image != null) {
+                              String nextPhotoPath = image.path;
+                              if (kIsWeb) {
+                                final bytes = await image.readAsBytes();
+                                final encoded = base64Encode(bytes);
+                                final lowerName = image.name.toLowerCase();
+                                var mime = 'image/jpeg';
+                                if (lowerName.endsWith('.png')) {
+                                  mime = 'image/png';
+                                } else if (lowerName.endsWith('.gif')) {
+                                  mime = 'image/gif';
+                                } else if (lowerName.endsWith('.webp')) {
+                                  mime = 'image/webp';
+                                }
+                                nextPhotoPath = 'data:$mime;base64,$encoded';
+                              }
+
                               setDialogState(() {
-                                photoPath = image.path;
+                                photoPath = nextPhotoPath;
                               });
                             }
                           },
@@ -285,20 +539,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               color: AppTheme.primaryColor,
                               shape: BoxShape.circle,
                             ),
-                            child: Icon(Icons.camera_alt, color: colors.onPrimaryText, size: 16),
+                            child: Icon(
+                              Icons.camera_alt,
+                              color: colors.onPrimaryText,
+                              size: 16,
+                            ),
                           ),
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 24),
+                  if (photoPath != null)
+                    TextButton.icon(
+                      onPressed: () {
+                        setDialogState(() {
+                          photoPath = null;
+                        });
+                      },
+                      icon: const Icon(
+                        Icons.person_remove_outlined,
+                        color: Colors.redAccent,
+                      ),
+                      label: const Text(
+                        'Remove Photo',
+                        style: TextStyle(color: Colors.redAccent),
+                      ),
+                    ),
+                  if (photoPath != null) const SizedBox(height: 8),
                   TextField(
                     controller: nameController,
                     style: TextStyle(color: theme.colorScheme.onSurface),
                     decoration: InputDecoration(
                       labelText: 'Name',
                       labelStyle: TextStyle(color: colors.textMuted),
-                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: colors.textMuted)),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: colors.textMuted),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -308,7 +585,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     decoration: InputDecoration(
                       labelText: 'Email',
                       labelStyle: TextStyle(color: colors.textMuted),
-                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: colors.textMuted)),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(color: colors.textMuted),
+                      ),
                     ),
                   ),
                 ],
@@ -317,12 +596,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: Text('Cancel', style: TextStyle(color: colors.textMuted)),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(color: colors.textMuted),
+                ),
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryColor,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
                 onPressed: () async {
                   final newName = nameController.text.trim();
@@ -330,22 +614,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   if (newName.isNotEmpty && newEmail.isNotEmpty) {
                     await PreferencesService.setUserName(newName);
                     await PreferencesService.setUserEmail(newEmail);
-                    if (photoPath != null) {
-                      await PreferencesService.setProfilePhotoPath(photoPath!);
-                    }
+                    await PreferencesService.setProfilePhotoPath(
+                      photoPath ?? '',
+                    );
                     if (ctx.mounted) Navigator.pop(ctx);
                     if (context.mounted) {
-                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Profile updated successfully!'), behavior: SnackBarBehavior.floating),
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Profile updated successfully!'),
+                          behavior: SnackBarBehavior.floating,
+                        ),
                       );
                     }
                   }
                 },
-                child: Text('Save', style: TextStyle(color: colors.onPrimaryText)),
+                child: Text(
+                  'Save',
+                  style: TextStyle(color: colors.onPrimaryText),
+                ),
               ),
             ],
           );
-        }
+        },
       ),
     );
   }
@@ -367,46 +657,91 @@ class _SettingsScreenState extends State<SettingsScreen> {
               }
               return AlertDialog(
                 backgroundColor: theme.cardColor,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                title: Text('Backup & Sync', style: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.bold)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                title: Text(
+                  'Backup & Sync',
+                  style: TextStyle(
+                    color: theme.colorScheme.onSurface,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 content: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
                       'Keep your data safe by syncing it to your cloud accounts. This includes your journal entries, mood logs, and action items.',
-                      style: TextStyle(color: colors.textMuted, fontSize: 13, height: 1.4),
+                      style: TextStyle(
+                        color: colors.textMuted,
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
                     ),
                     const SizedBox(height: 20),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.sync, color: AppTheme.primaryColor),
-                      title: Text('Auto-Sync', style: TextStyle(color: theme.colorScheme.onSurface)),
-                      subtitle: Text('Sync data in the background', style: TextStyle(color: colors.textMuted, fontSize: 11)),
+                      leading: const Icon(
+                        Icons.sync,
+                        color: AppTheme.primaryColor,
+                      ),
+                      title: Text(
+                        'Auto-Sync',
+                        style: TextStyle(color: theme.colorScheme.onSurface),
+                      ),
+                      subtitle: Text(
+                        'Sync data in the background',
+                        style: TextStyle(color: colors.textMuted, fontSize: 11),
+                      ),
                       trailing: Switch(
                         value: isAutoSync,
                         activeThumbColor: AppTheme.primaryColor,
                         onChanged: (val) async {
                           setDialogState(() => isAutoSync = val);
                           await PreferencesService.setAutoSyncEnabled(val);
+                          await AuthService.updateGoogleCalendarSyncSettings(
+                            autoSyncEnabled: val,
+                            syncIntervalMinutes: 5,
+                          );
+                          if (val) {
+                            await AuthService.startGoogleCalendarAutoSyncIfEnabled();
+                          } else {
+                            await AuthService.stopGoogleCalendarAutoSyncLoop();
+                          }
                         },
                       ),
                     ),
                     Divider(color: colors.subtleBorder),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.cloud_upload, color: AppTheme.primaryColor),
-                      title: Text('Manual Backup', style: TextStyle(color: theme.colorScheme.onSurface)),
-                      subtitle: Text(_lastBackupDate != null ? 'Last: $_lastBackupDate' : 'Never backed up', style: TextStyle(color: colors.textMuted, fontSize: 11)),
+                      leading: const Icon(
+                        Icons.cloud_upload,
+                        color: AppTheme.primaryColor,
+                      ),
+                      title: Text(
+                        'Manual Backup',
+                        style: TextStyle(color: theme.colorScheme.onSurface),
+                      ),
+                      subtitle: Text(
+                        _lastBackupDate != null
+                            ? 'Last: $_lastBackupDate'
+                            : 'Never backed up',
+                        style: TextStyle(color: colors.textMuted, fontSize: 11),
+                      ),
                       trailing: ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppTheme.primaryColor,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 0,
+                          ),
                           minimumSize: const Size(60, 30),
                         ),
                         onPressed: () async {
                           // Simulate backup process
                           final now = DateTime.now();
-                          final dateStr = "${now.day}/${now.month}/${now.year} ${now.hour}:${now.minute}";
+                          final dateStr =
+                              "${now.day}/${now.month}/${now.year} ${now.hour}:${now.minute}";
                           await PreferencesService.setLastBackupDate(dateStr);
                           if (mounted) {
                             setState(() {
@@ -415,12 +750,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           }
                           if (ctx.mounted) Navigator.pop(ctx);
                           if (context.mounted) {
-                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Backup completed successfully!'), behavior: SnackBarBehavior.floating),
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Backup completed successfully!'),
+                                behavior: SnackBarBehavior.floating,
+                              ),
                             );
                           }
                         },
-                        child: Text('Start', style: TextStyle(fontSize: 12, color: colors.onPrimaryText)),
+                        child: Text(
+                          'Start',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.onPrimaryText,
+                          ),
+                        ),
                       ),
                     ),
                   ],
@@ -428,13 +772,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 actions: [
                   TextButton(
                     onPressed: () => Navigator.pop(ctx),
-                    child: const Text('Close', style: TextStyle(color: AppTheme.primaryColor)),
+                    child: const Text(
+                      'Close',
+                      style: TextStyle(color: AppTheme.primaryColor),
+                    ),
                   ),
                 ],
               );
-            }
+            },
           );
-        }
+        },
       ),
     );
   }
@@ -450,15 +797,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (context, setState) {
           return AlertDialog(
             backgroundColor: theme.cardColor,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: Text('Privacy & Security', style: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.bold)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: Text(
+              'Privacy & Security',
+              style: TextStyle(
+                color: theme.colorScheme.onSurface,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.fingerprint, color: AppTheme.primaryColor),
-                  title: Text('Biometric Lock', style: TextStyle(color: theme.colorScheme.onSurface)),
+                  leading: const Icon(
+                    Icons.fingerprint,
+                    color: AppTheme.primaryColor,
+                  ),
+                  title: Text(
+                    'Biometric Lock',
+                    style: TextStyle(color: theme.colorScheme.onSurface),
+                  ),
                   trailing: Switch(
                     value: isBiometric,
                     activeThumbColor: AppTheme.primaryColor,
@@ -470,13 +831,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.password, color: AppTheme.primaryColor),
-                  title: Text('Change Password', style: TextStyle(color: theme.colorScheme.onSurface)),
-                  trailing: Icon(Icons.chevron_right, color: colors.iconDefault),
+                  leading: const Icon(
+                    Icons.password,
+                    color: AppTheme.primaryColor,
+                  ),
+                  title: Text(
+                    'Change Password',
+                    style: TextStyle(color: theme.colorScheme.onSurface),
+                  ),
+                  trailing: Icon(
+                    Icons.chevron_right,
+                    color: colors.iconDefault,
+                  ),
                   onTap: () {
                     Navigator.pop(ctx);
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Password reset link sent to email.'), behavior: SnackBarBehavior.floating),
+                      const SnackBar(
+                        content: Text('Password reset link sent to email.'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
                     );
                   },
                 ),
@@ -485,11 +858,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('Close', style: TextStyle(color: AppTheme.primaryColor)),
+                child: const Text(
+                  'Close',
+                  style: TextStyle(color: AppTheme.primaryColor),
+                ),
               ),
             ],
           );
-        }
+        },
       ),
     );
   }
@@ -502,7 +878,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (ctx) => AlertDialog(
         backgroundColor: theme.cardColor,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(title, style: TextStyle(color: theme.colorScheme.onSurface, fontWeight: FontWeight.bold)),
+        title: Text(
+          title,
+          style: TextStyle(
+            color: theme.colorScheme.onSurface,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         content: SingleChildScrollView(
           child: Text(
             content,
@@ -512,7 +894,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close', style: TextStyle(color: AppTheme.primaryColor)),
+            child: const Text(
+              'Close',
+              style: TextStyle(color: AppTheme.primaryColor),
+            ),
           ),
         ],
       ),
@@ -546,7 +931,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             color: theme.colorScheme.onSurface.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(10),
           ),
-          child: Icon(icon, color: titleColor ?? theme.colorScheme.onSurface, size: 20),
+          child: Icon(
+            icon,
+            color: titleColor ?? theme.colorScheme.onSurface,
+            size: 20,
+          ),
         ),
         title: Text(
           title,
@@ -562,7 +951,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: TextStyle(color: colors.textMuted, fontSize: 12),
               )
             : null,
-        trailing: trailing ?? Icon(Icons.chevron_right, color: colors.iconDefault, size: 20),
+        trailing:
+            trailing ??
+            Icon(Icons.chevron_right, color: colors.iconDefault, size: 20),
       ),
     );
   }

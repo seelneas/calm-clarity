@@ -13,6 +13,8 @@ import '../providers/journal_provider.dart';
 import '../models/journal_entry.dart';
 import '../models/action_item.dart';
 import '../services/ai_service.dart';
+import '../services/account_access_service.dart';
+import '../services/notification_service.dart';
 
 class _MoodDecision {
   final Mood mood;
@@ -546,6 +548,7 @@ class _VoiceRecordingScreenState extends State<VoiceRecordingScreen>
         listen: false,
       );
       await journalProvider.addEntry(entry, items);
+        await NotificationService.notifyEntrySaved();
       final confidencePct = (moodDecision.confidence * 100)
           .clamp(0, 100)
           .toStringAsFixed(0);
@@ -565,7 +568,8 @@ class _VoiceRecordingScreenState extends State<VoiceRecordingScreen>
         final aiActionItems = List<String>.from(
           aiResult['ai_action_items'] ?? const [],
         );
-        final safetyFlag = aiResult['safety_flag'] == true;
+        final safetyFlag =
+            aiResult['safety_flag'] == true || aiResult['is_blocked'] == true;
         final crisisResources = List<String>.from(
           aiResult['crisis_resources'] ?? const [],
         );
@@ -598,18 +602,15 @@ class _VoiceRecordingScreenState extends State<VoiceRecordingScreen>
         }
 
         if (mounted) {
-          if (safetyFlag && crisisResources.isNotEmpty) {
-            _showMessage(
-              'Safety support: ${crisisResources.first}',
-            );
+          if (safetyFlag) {
+            _showMessage('AI returned a safety-focused response for this entry.');
+            await _showSafetySupportDialog(crisisResources);
           } else {
             _showMessage('AI reflection added to your entry.');
           }
         }
-      } else if (mounted) {
-        _showMessage(
-          (aiResult['message'] as String?) ?? 'AI reflection unavailable right now.',
-        );
+      } else {
+        _handleAIFailure(aiResult);
       }
 
       if (context.mounted) {
@@ -685,6 +686,103 @@ class _VoiceRecordingScreenState extends State<VoiceRecordingScreen>
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(text), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  Future<void> _showSafetySupportDialog(List<String> resources) async {
+    if (!mounted || resources.isEmpty) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return AlertDialog(
+          backgroundColor: theme.cardColor,
+          title: const Text('Safety Support'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Your entry is saved. Here are immediate support resources:',
+                ),
+                const SizedBox(height: 10),
+                ...resources.map(
+                  (item) => Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text('• $item'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Got it'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.pushNamed(context, '/settings');
+              },
+              child: const Text('Open Settings'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _handleAIFailure(Map<String, dynamic> aiResult) {
+    final errorCode = (aiResult['error_code'] ?? '').toString();
+    final message = (aiResult['user_message'] ?? aiResult['message'] ??
+            'AI reflection unavailable right now.')
+        .toString();
+
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+
+    if (errorCode == 'ai_disabled') {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'Settings',
+            onPressed: () => Navigator.pushNamed(context, '/settings'),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (errorCode == 'auth_required' ||
+        message.toLowerCase().contains('sign in required')) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'Sign In',
+            onPressed: () {
+              AccountAccessService.requireAccount(
+                context,
+                featureLabel: 'AI analysis',
+              );
+            },
+          ),
+        ),
+      );
+      return;
+    }
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 

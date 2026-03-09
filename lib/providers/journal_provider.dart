@@ -22,6 +22,7 @@ class JournalProvider with ChangeNotifier {
     notifyListeners();
 
     _entries = await DatabaseService.instance.getAllEntries();
+    _actionItems.clear();
 
     // Load action items for each entry
     for (var entry in _entries) {
