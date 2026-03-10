@@ -20,6 +20,10 @@ class AuthService {
       defaultValue: '',
     ),
   );
+  static const String _adminApiKey = String.fromEnvironment(
+    'ADMIN_API_KEY',
+    defaultValue: '',
+  );
 
   static final GoogleSignIn _googleSignIn = GoogleSignIn(
     clientId: kIsWeb && googleWebClientId.isNotEmpty
@@ -44,11 +48,103 @@ class AuthService {
   static bool _googleCalendarSyncInFlight = false;
   static Duration _googleCalendarSyncInterval = const Duration(minutes: 5);
 
+  static Map<String, dynamic> _errorResultFromResponse(
+    http.Response response,
+    String fallbackMessage,
+  ) {
+    final body = _tryDecodeJson(response.body);
+    final detail = _extractDetailMessage(body, fallbackMessage);
+    return {
+      'success': false,
+      'message': detail,
+      'status_code': response.statusCode,
+      'error_type': _classifyAuthError(detail, response.statusCode),
+    };
+  }
+
+  static dynamic _tryDecodeJson(String rawBody) {
+    if (rawBody.trim().isEmpty) {
+      return null;
+    }
+    try {
+      return jsonDecode(rawBody);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String _extractDetailMessage(dynamic body, String fallbackMessage) {
+    if (body is Map<String, dynamic>) {
+      final detail = body['detail'];
+      if (detail is String && detail.trim().isNotEmpty) {
+        return detail.trim();
+      }
+      final message = body['message'];
+      if (message is String && message.trim().isNotEmpty) {
+        return message.trim();
+      }
+    }
+    return fallbackMessage;
+  }
+
+  static String _classifyAuthError(String message, int statusCode) {
+    final lowered = message.toLowerCase();
+    if (lowered.contains('email verification is required') ||
+        lowered.contains('verification token')) {
+      return 'email_verification_required';
+    }
+    if (lowered.contains('account is suspended')) {
+      return 'account_suspended';
+    }
+    if (lowered.contains('too many failed attempts') ||
+        lowered.contains('captcha required') ||
+        lowered.contains('rate limit exceeded')) {
+      return 'account_locked';
+    }
+    if (lowered.contains('admin mfa')) {
+      return 'mfa_required';
+    }
+    if (lowered.contains('could not validate credentials') ||
+        lowered.contains('incorrect email or password')) {
+      return 'invalid_credentials';
+    }
+    if (statusCode == 401) {
+      return 'unauthorized';
+    }
+    if (statusCode == 403) {
+      return 'forbidden';
+    }
+    return 'unknown';
+  }
+
+  static Future<Map<String, String>> _buildAuthHeaders({
+    bool requireAuthToken = false,
+    bool includeAdminKey = false,
+    String? adminTotp,
+  }) async {
+    final headers = <String, String>{'Content-Type': 'application/json'};
+    if (requireAuthToken) {
+      final token = await PreferencesService.getAuthToken();
+      if (token == null || token.isEmpty) {
+        throw Exception('Sign in required');
+      }
+      headers['Authorization'] = 'Bearer $token';
+    }
+    if (includeAdminKey && _adminApiKey.trim().isNotEmpty) {
+      headers['X-Admin-Key'] = _adminApiKey.trim();
+    }
+    final trimmedTotp = (adminTotp ?? '').trim();
+    if (trimmedTotp.isNotEmpty) {
+      headers['X-Admin-TOTP'] = trimmedTotp;
+    }
+    return headers;
+  }
+
   static Future<Map<String, dynamic>> signup(String name, String email, String password) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/signup'),
-        headers: {'Content-Type': 'application/json'},
+        headers: await _buildAuthHeaders(),
         body: jsonEncode({
           'name': name,
           'email': email,
@@ -56,12 +152,12 @@ class AuthService {
         }),
       );
 
-      final data = jsonDecode(response.body);
+      final data = _tryDecodeJson(response.body);
       if (response.statusCode == 200) {
-        await _handleAuthSuccess(data);
+        await _handleAuthSuccess(Map<String, dynamic>.from(data as Map));
         return {'success': true};
       } else {
-        return {'success': false, 'message': data['detail'] ?? 'Signup failed'};
+        return _errorResultFromResponse(response, 'Signup failed');
       }
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
@@ -72,19 +168,19 @@ class AuthService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/login'),
-        headers: {'Content-Type': 'application/json'},
+        headers: await _buildAuthHeaders(),
         body: jsonEncode({
           'email': email,
           'password': password,
         }),
       );
 
-      final data = jsonDecode(response.body);
+      final data = _tryDecodeJson(response.body);
       if (response.statusCode == 200) {
-        await _handleAuthSuccess(data);
+        await _handleAuthSuccess(Map<String, dynamic>.from(data as Map));
         return {'success': true};
       } else {
-        return {'success': false, 'message': data['detail'] ?? 'Login failed'};
+        return _errorResultFromResponse(response, 'Login failed');
       }
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
@@ -119,19 +215,19 @@ class AuthService {
 
       final response = await http.post(
         Uri.parse('$baseUrl/auth/google'),
-        headers: {'Content-Type': 'application/json'},
+        headers: await _buildAuthHeaders(),
         body: jsonEncode({
           'token': idToken,
           'provider': 'google',
         }),
       );
 
-      final data = jsonDecode(response.body);
+      final data = _tryDecodeJson(response.body);
       if (response.statusCode == 200) {
-        await _handleAuthSuccess(data);
+        await _handleAuthSuccess(Map<String, dynamic>.from(data as Map));
         return {'success': true};
       } else {
-        return {'success': false, 'message': data['detail'] ?? 'Google login failed'};
+        return _errorResultFromResponse(response, 'Google login failed');
       }
     } catch (e) {
       debugPrint('Google Sign-In Error: $e');
@@ -486,7 +582,7 @@ class AuthService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/forgot-password'),
-        headers: {'Content-Type': 'application/json'},
+        headers: await _buildAuthHeaders(),
         body: jsonEncode({'email': email}),
       );
 
@@ -511,7 +607,7 @@ class AuthService {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/reset-password'),
-        headers: {'Content-Type': 'application/json'},
+        headers: await _buildAuthHeaders(),
         body: jsonEncode({
           'token': token,
           'new_password': newPassword,
@@ -522,8 +618,205 @@ class AuthService {
       if (response.statusCode == 200) {
         return {'success': true, 'message': data['message']};
       } else {
-        return {'success': false, 'message': data['detail'] ?? 'Reset failed'};
+        return _errorResultFromResponse(response, 'Reset failed');
       }
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> resendEmailVerification(String email) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/resend-email-verification'),
+        headers: await _buildAuthHeaders(),
+        body: jsonEncode({'email': email}),
+      );
+
+      final data = _tryDecodeJson(response.body);
+      if (response.statusCode == 200 && data is Map) {
+        return {
+          'success': true,
+          'message': data['message'] ?? 'Verification email sent',
+          'verification_token': data['verification_token'],
+          'verification_link': data['verification_link'],
+          'delivery': data['delivery'],
+        };
+      }
+      return _errorResultFromResponse(response, 'Unable to resend verification email');
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> verifyEmailToken(String token) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/verify-email'),
+        headers: await _buildAuthHeaders(),
+        body: jsonEncode({'token': token}),
+      );
+
+      final data = _tryDecodeJson(response.body);
+      if (response.statusCode == 200 && data is Map) {
+        return {
+          'success': true,
+          'message': data['message'] ?? 'Email verified successfully',
+        };
+      }
+      return _errorResultFromResponse(response, 'Email verification failed');
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> adminMfaSetup({String? adminTotp}) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/admin/mfa/setup'),
+        headers: await _buildAuthHeaders(
+          requireAuthToken: true,
+          includeAdminKey: true,
+          adminTotp: adminTotp,
+        ),
+      );
+      final data = _tryDecodeJson(response.body);
+      if (response.statusCode == 200 && data is Map) {
+        return {'success': true, 'data': Map<String, dynamic>.from(data)};
+      }
+      return _errorResultFromResponse(response, 'Unable to load MFA setup');
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> adminMfaEnable(
+    String code, {
+    String? adminTotp,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/admin/mfa/enable'),
+        headers: await _buildAuthHeaders(
+          requireAuthToken: true,
+          includeAdminKey: true,
+          adminTotp: adminTotp,
+        ),
+        body: jsonEncode({'code': code}),
+      );
+      final data = _tryDecodeJson(response.body);
+      if (response.statusCode == 200 && data is Map) {
+        return {
+          'success': true,
+          'message': data['message'] ?? 'Admin MFA enabled',
+          'mfa_enabled': data['mfa_enabled'] == true,
+        };
+      }
+      return _errorResultFromResponse(response, 'Unable to enable MFA');
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> adminMfaDisable(
+    String code, {
+    String? adminTotp,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/admin/mfa/disable'),
+        headers: await _buildAuthHeaders(
+          requireAuthToken: true,
+          includeAdminKey: true,
+          adminTotp: adminTotp,
+        ),
+        body: jsonEncode({'code': code}),
+      );
+      final data = _tryDecodeJson(response.body);
+      if (response.statusCode == 200 && data is Map) {
+        return {
+          'success': true,
+          'message': data['message'] ?? 'Admin MFA disabled',
+          'mfa_enabled': data['mfa_enabled'] == true,
+        };
+      }
+      return _errorResultFromResponse(response, 'Unable to disable MFA');
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> fetchActiveSessions() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/sessions/active'),
+        headers: await _buildAuthHeaders(requireAuthToken: true),
+      );
+      final data = _tryDecodeJson(response.body);
+      if (response.statusCode == 200 && data is Map) {
+        return {'success': true, 'data': Map<String, dynamic>.from(data)};
+      }
+      return _errorResultFromResponse(response, 'Failed to load active sessions');
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> revokeSession(int sessionId) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/sessions/active/$sessionId'),
+        headers: await _buildAuthHeaders(requireAuthToken: true),
+      );
+      final data = _tryDecodeJson(response.body);
+      if (response.statusCode == 200 && data is Map) {
+        return {'success': true, 'message': data['message'] ?? 'Session revoked'};
+      }
+      return _errorResultFromResponse(response, 'Failed to revoke session');
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> revokeAllSessions() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/sessions/active/revoke-all'),
+        headers: await _buildAuthHeaders(requireAuthToken: true),
+      );
+      final data = _tryDecodeJson(response.body);
+      if (response.statusCode == 200 && data is Map) {
+        return {'success': true, 'message': data['message'] ?? 'All sessions revoked'};
+      }
+      return _errorResultFromResponse(response, 'Failed to revoke all sessions');
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
+  }
+
+  static Future<Map<String, dynamic>> changePassword(
+    String currentPassword,
+    String newPassword,
+  ) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/change-password'),
+        headers: await _buildAuthHeaders(requireAuthToken: true),
+        body: jsonEncode({
+          'current_password': currentPassword,
+          'new_password': newPassword,
+        }),
+      );
+      final data = _tryDecodeJson(response.body);
+      if (response.statusCode == 200 && data is Map) {
+        await logout();
+        return {
+          'success': true,
+          'message': data['message'] ?? 'Password changed successfully',
+          'global_logout': true,
+        };
+      }
+      return _errorResultFromResponse(response, 'Failed to change password');
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }

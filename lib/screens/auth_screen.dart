@@ -26,6 +26,7 @@ class _AuthScreenState extends State<AuthScreen>
   bool _loginObscure = true;
   bool _signupObscure = true;
   bool _isLoading = false;
+  String? _securityNotice;
 
   @override
   void initState() {
@@ -80,7 +81,7 @@ class _AuthScreenState extends State<AuthScreen>
       }
     } else {
       if (mounted) {
-        _showFeedback(result['message'], isError: true);
+        await _handleAuthFailure(result, email: email);
       }
     }
   }
@@ -117,7 +118,7 @@ class _AuthScreenState extends State<AuthScreen>
       }
     } else {
       if (mounted) {
-        _showFeedback(result['message'], isError: true);
+        await _handleAuthFailure(result, email: email);
       }
     }
   }
@@ -142,12 +143,259 @@ class _AuthScreenState extends State<AuthScreen>
       }
     } else {
       if (mounted) {
-        _showFeedback(
-          result['message'] ?? 'Google Sign-In failed',
-          isError: true,
-        );
+        await _handleAuthFailure(result, email: _loginEmailController.text.trim());
       }
     }
+  }
+
+  Future<void> _handleAuthFailure(
+    Map<String, dynamic> result, {
+    required String email,
+  }) async {
+    final message = (result['message'] ?? 'Authentication failed').toString();
+    final errorType = (result['error_type'] ?? '').toString().toLowerCase();
+    final loweredMessage = message.toLowerCase();
+    final isVerification = errorType == 'email_verification_required' ||
+        loweredMessage.contains('email verification is required');
+    final isSuspended = errorType == 'account_suspended' ||
+        loweredMessage.contains('account is suspended');
+    final isLocked = errorType == 'account_locked' ||
+        loweredMessage.contains('too many failed attempts') ||
+        loweredMessage.contains('captcha required') ||
+        loweredMessage.contains('rate limit exceeded');
+
+    if (isVerification) {
+      setState(() {
+        _securityNotice = 'Email verification is required before you can sign in.';
+      });
+      await _showVerificationRequiredDialog(
+        email: email,
+        message: message,
+      );
+      return;
+    }
+
+    if (isSuspended) {
+      setState(() {
+        _securityNotice = 'Your account is suspended. Contact support for help.';
+      });
+      await _showSuspendedDialog(message);
+      return;
+    }
+
+    if (isLocked) {
+      setState(() {
+        _securityNotice = 'Too many attempts. Please wait before trying again.';
+      });
+      await _showLockedDialog(message);
+      return;
+    }
+
+    _showFeedback(message, isError: true);
+  }
+
+  Future<void> _showSuspendedDialog(String message) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Account Suspended'),
+          content: Text(
+            '$message\n\nIf you believe this is a mistake, contact support or an administrator to reactivate your account.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showLockedDialog(String message) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Sign-In Temporarily Locked'),
+          content: Text(
+            '$message\n\nTry again in a few minutes. You can also reset your password if needed.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _showForgotPasswordDialog(context);
+              },
+              child: const Text('Reset Password'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showVerificationRequiredDialog({
+    required String email,
+    required String message,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        bool sending = false;
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            return AlertDialog(
+              title: const Text('Verify Your Email'),
+              content: Text(
+                '$message\n\nCheck your inbox for the verification link, or resend it and verify using a token.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: sending
+                      ? null
+                      : () async {
+                          setLocalState(() => sending = true);
+                          final resend = await AuthService.resendEmailVerification(email);
+                          if (!mounted) return;
+                          setLocalState(() => sending = false);
+
+                          final verificationLink = (resend['verification_link'] ?? '').toString();
+                          if (verificationLink.isNotEmpty) {
+                            await Clipboard.setData(
+                              ClipboardData(text: verificationLink),
+                            );
+                            if (!mounted) return;
+                            _showFeedback('Verification link copied to clipboard.');
+                          }
+
+                          _showFeedback(
+                            (resend['message'] ?? 'Verification email resent').toString(),
+                            isError: !(resend['success'] == true),
+                          );
+                        },
+                  child: const Text('Resend Email'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _showVerifyEmailTokenDialog(prefilledEmail: email);
+                  },
+                  child: const Text('Enter Token'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _showVerifyEmailTokenDialog({String? prefilledEmail}) async {
+    final tokenController = TextEditingController();
+    final emailController = TextEditingController(text: prefilledEmail ?? _loginEmailController.text.trim());
+    bool submitting = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            return AlertDialog(
+              title: const Text('Email Verification'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: tokenController,
+                    decoration: const InputDecoration(
+                      labelText: 'Verification token',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: emailController,
+                    decoration: const InputDecoration(
+                      labelText: 'Email (for resend)',
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          final email = emailController.text.trim();
+                          if (email.isEmpty) {
+                            _showFeedback('Enter an email to resend verification.', isError: true);
+                            return;
+                          }
+                          setLocalState(() => submitting = true);
+                          final resend = await AuthService.resendEmailVerification(email);
+                          setLocalState(() => submitting = false);
+
+                          final verificationLink = (resend['verification_link'] ?? '').toString();
+                          if (verificationLink.isNotEmpty) {
+                            await Clipboard.setData(
+                              ClipboardData(text: verificationLink),
+                            );
+                            if (!mounted) return;
+                            _showFeedback('Verification link copied to clipboard.');
+                          }
+
+                          _showFeedback(
+                            (resend['message'] ?? 'Verification email resent').toString(),
+                            isError: !(resend['success'] == true),
+                          );
+                        },
+                  child: const Text('Resend'),
+                ),
+                TextButton(
+                  onPressed: submitting
+                      ? null
+                      : () async {
+                          final token = tokenController.text.trim();
+                          if (token.isEmpty) {
+                            _showFeedback('Enter a verification token.', isError: true);
+                            return;
+                          }
+                          setLocalState(() => submitting = true);
+                          final verify = await AuthService.verifyEmailToken(token);
+                          setLocalState(() => submitting = false);
+                          if (!mounted) return;
+                          if (verify['success'] == true) {
+                            setState(() {
+                              _securityNotice = null;
+                            });
+                            Navigator.pop(ctx);
+                            _showFeedback((verify['message'] ?? 'Email verified successfully').toString());
+                          } else {
+                            _showFeedback((verify['message'] ?? 'Verification failed').toString(), isError: true);
+                          }
+                        },
+                  child: const Text('Verify'),
+                ),
+                TextButton(
+                  onPressed: submitting ? null : () => Navigator.pop(ctx),
+                  child: const Text('Close'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showFeedback(String message, {bool isError = false}) {
@@ -204,6 +452,36 @@ class _AuthScreenState extends State<AuthScreen>
       body: SafeArea(
         child: Column(
           children: [
+            if (_securityNotice != null) ...[
+              Container(
+                margin: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.35)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.security_outlined, color: Colors.orangeAccent),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _securityNotice!,
+                        style: const TextStyle(
+                          color: Colors.orangeAccent,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => setState(() => _securityNotice = null),
+                      icon: const Icon(Icons.close, size: 18, color: Colors.orangeAccent),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 40),
             // Logo / Branding
             Icon(Icons.spa_outlined, size: 56, color: AppTheme.primaryColor),
@@ -300,6 +578,16 @@ class _AuthScreenState extends State<AuthScreen>
               onPressed: () => _showForgotPasswordDialog(context),
               child: const Text(
                 'Forgot Password?',
+                style: TextStyle(color: AppTheme.primaryColor, fontSize: 13),
+              ),
+            ),
+          ),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () => _showVerifyEmailTokenDialog(),
+              child: const Text(
+                'Verify Email',
                 style: TextStyle(color: AppTheme.primaryColor, fontSize: 13),
               ),
             ),

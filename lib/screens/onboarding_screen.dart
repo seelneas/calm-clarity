@@ -64,9 +64,17 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       }
     } else {
       if (mounted) {
+        final errorType = (result['error_type'] ?? '').toString().toLowerCase();
+        final message = (result['message'] ?? 'Google Sign-In failed').toString();
+        final mappedMessage = switch (errorType) {
+          'email_verification_required' => 'Please verify your email before signing in.',
+          'account_suspended' => 'Your account is suspended. Contact support for reactivation.',
+          'account_locked' => 'Too many attempts. Try again shortly, then retry sign-in.',
+          _ => message,
+        };
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result['message'] ?? 'Google Sign-In failed'),
+            content: Text(mappedMessage),
             backgroundColor: Colors.redAccent,
             behavior: SnackBarBehavior.floating,
           ),

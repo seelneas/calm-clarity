@@ -9,6 +9,7 @@ import 'screens/admin_console_screen.dart';
 import 'screens/voice_recording_screen.dart';
 import 'screens/entry_detail_screen.dart';
 import 'screens/reset_password_screen.dart';
+import 'screens/verify_email_screen.dart';
 import 'screens/settings_screen.dart';
 
 import 'services/preferences_service.dart';
@@ -89,12 +90,58 @@ class CalmClarityApp extends StatelessWidget {
     return (isResetRoute: false, token: '');
   }
 
+  ({bool isVerifyRoute, String token}) _resolveWebVerifyRoute() {
+    if (!kIsWeb) {
+      return (isVerifyRoute: false, token: '');
+    }
+
+    final uri = Uri.base;
+    final queryToken = uri.queryParameters['verify_email_token'] ??
+        uri.queryParameters['verification_token'] ??
+        uri.queryParameters['token'] ??
+        '';
+    if (queryToken.isNotEmpty) {
+      return (isVerifyRoute: true, token: queryToken);
+    }
+
+    if (uri.path == '/verify-email') {
+      return (
+        isVerifyRoute: true,
+        token: uri.queryParameters['token'] ?? '',
+      );
+    }
+
+    final fragment = uri.fragment;
+    if (fragment.isNotEmpty) {
+      final normalized = fragment.startsWith('/') ? fragment : '/$fragment';
+      final fragmentUri = Uri.parse(normalized);
+      final fragmentToken = fragmentUri.queryParameters['verify_email_token'] ??
+          fragmentUri.queryParameters['verification_token'] ??
+          fragmentUri.queryParameters['token'] ??
+          '';
+      if (fragmentToken.isNotEmpty) {
+        return (isVerifyRoute: true, token: fragmentToken);
+      }
+      if (fragmentUri.path == '/verify-email') {
+        return (
+          isVerifyRoute: true,
+          token: fragmentUri.queryParameters['token'] ?? '',
+        );
+      }
+    }
+
+    return (isVerifyRoute: false, token: '');
+  }
+
   @override
   Widget build(BuildContext context) {
     final launchReset = _resolveWebResetRoute();
+    final launchVerify = _resolveWebVerifyRoute();
     final initial = launchReset.isResetRoute
-        ? '/reset-password'
-      : (isAuthenticated ? '/home' : '/onboarding');
+      ? '/reset-password'
+      : (launchVerify.isVerifyRoute
+        ? '/verify-email'
+        : (isAuthenticated ? '/home' : '/onboarding'));
 
     return Consumer<ThemeProvider>(
       builder: (context, themeProvider, child) {
@@ -112,6 +159,9 @@ class CalmClarityApp extends StatelessWidget {
             '/voice_recording': (context) => const VoiceRecordingScreen(),
             '/settings': (context) => const SettingsScreen(),
             '/admin': (context) => const AdminConsoleScreen(),
+            '/verify-email': (context) => VerifyEmailScreen(
+                  initialToken: launchVerify.token,
+                ),
           },
           onGenerateRoute: (settings) {
             if (settings.name == '/entry_detail') {
@@ -131,6 +181,22 @@ class CalmClarityApp extends StatelessWidget {
                       : launchReset.token);
               return MaterialPageRoute(
                 builder: (_) => ResetPasswordScreen(initialToken: initialToken),
+              );
+            }
+            if ((settings.name ?? '').startsWith('/verify-email')) {
+              final routeUri = Uri.parse(settings.name ?? '/verify-email');
+              final tokenFromRoute = routeUri.queryParameters['verify_email_token'] ??
+                  routeUri.queryParameters['verification_token'] ??
+                  routeUri.queryParameters['token'] ??
+                  '';
+              final args = settings.arguments;
+              final initialToken = args is String && args.isNotEmpty
+                  ? args
+                  : (tokenFromRoute.isNotEmpty
+                      ? tokenFromRoute
+                      : launchVerify.token);
+              return MaterialPageRoute(
+                builder: (_) => VerifyEmailScreen(initialToken: initialToken),
               );
             }
             return null;

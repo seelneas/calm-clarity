@@ -39,7 +39,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]
         finally:
             db.close()
 
-    monkeypatch.setattr(main, "ADMIN_ALLOWED_EMAILS", set())
+    monkeypatch.setattr(main, "ADMIN_ALLOWED_EMAILS", {"admin@example.com"})
     main.app.dependency_overrides[main.get_db] = override_get_db
 
     with TestClient(main.app) as test_client:

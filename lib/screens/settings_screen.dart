@@ -227,6 +227,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               }
             },
           ),
+          _buildSettingsItem(
+            context: context,
+            icon: Icons.devices_outlined,
+            title: 'Active Sessions & Devices',
+            subtitle: 'View and revoke signed-in sessions',
+            onTap: () => _showSessionsDialog(context),
+          ),
           const SizedBox(height: 32),
           _buildSectionHeader('PREFERENCES'),
           _buildSettingsItem(
@@ -845,12 +852,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   onTap: () {
                     Navigator.pop(ctx);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Password reset link sent to email.'),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
+                    _showChangePasswordDialog(context);
                   },
                 ),
               ],
@@ -867,6 +869,270 @@ class _SettingsScreenState extends State<SettingsScreen> {
           );
         },
       ),
+    );
+  }
+
+  void _showChangePasswordDialog(BuildContext context) {
+    final currentController = TextEditingController();
+    final nextController = TextEditingController();
+    final confirmController = TextEditingController();
+    bool submitting = false;
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setLocalState) {
+          return AlertDialog(
+            backgroundColor: Theme.of(context).cardColor,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Text('Change Password'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: currentController,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Current password'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: nextController,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'New password'),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: confirmController,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Confirm new password'),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: submitting ? null : () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: submitting
+                    ? null
+                    : () async {
+                        final current = currentController.text.trim();
+                        final next = nextController.text.trim();
+                        final confirm = confirmController.text.trim();
+                        if (current.isEmpty || next.isEmpty || confirm.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Fill all password fields.'),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                          return;
+                        }
+                        if (next != confirm) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('New passwords do not match.'),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                          return;
+                        }
+
+                        setLocalState(() => submitting = true);
+                        final result = await AuthService.changePassword(current, next);
+                        setLocalState(() => submitting = false);
+                        if (!mounted) return;
+
+                        if (result['success'] == true) {
+                          if (context.mounted) Navigator.pop(ctx);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text((result['message'] ?? 'Password changed').toString()),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                          Navigator.pushNamedAndRemoveUntil(context, '/auth', (route) => false);
+                          return;
+                        }
+
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text((result['message'] ?? 'Password change failed').toString()),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      },
+                child: const Text('Update'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _showSessionsDialog(BuildContext context) {
+    bool loading = true;
+    bool revoking = false;
+    String? error;
+    List<Map<String, dynamic>> sessions = const [];
+    List<Map<String, dynamic>> devices = const [];
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            Future<void> load() async {
+              setLocalState(() {
+                loading = true;
+                error = null;
+              });
+              final response = await AuthService.fetchActiveSessions();
+              if (!context.mounted) return;
+              if (response['success'] == true) {
+                final data = Map<String, dynamic>.from(response['data'] as Map);
+                setLocalState(() {
+                  sessions = List<Map<String, dynamic>>.from(
+                    (data['sessions'] as List? ?? const []).map(
+                      (item) => Map<String, dynamic>.from(item as Map),
+                    ),
+                  );
+                  devices = List<Map<String, dynamic>>.from(
+                    (data['devices'] as List? ?? const []).map(
+                      (item) => Map<String, dynamic>.from(item as Map),
+                    ),
+                  );
+                  loading = false;
+                });
+                return;
+              }
+              setLocalState(() {
+                error = (response['message'] ?? 'Failed to load sessions').toString();
+                loading = false;
+              });
+            }
+
+            Future<void> revokeOne(int sessionId) async {
+              setLocalState(() => revoking = true);
+              final result = await AuthService.revokeSession(sessionId);
+              setLocalState(() => revoking = false);
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text((result['message'] ?? 'Session revoke failed').toString()),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+              if (result['success'] == true) {
+                await load();
+              }
+            }
+
+            Future<void> revokeAll() async {
+              setLocalState(() => revoking = true);
+              final result = await AuthService.revokeAllSessions();
+              setLocalState(() => revoking = false);
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text((result['message'] ?? 'Failed to revoke all sessions').toString()),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+              if (result['success'] == true) {
+                Navigator.pop(ctx);
+                Navigator.pushNamedAndRemoveUntil(context, '/auth', (route) => false);
+              }
+            }
+
+            if (loading && sessions.isEmpty && error == null) {
+              load();
+            }
+
+            return AlertDialog(
+              backgroundColor: Theme.of(context).cardColor,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: const Text('Active Sessions & Devices'),
+              content: SizedBox(
+                width: 520,
+                child: loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : error != null
+                        ? Text(error!)
+                        : SingleChildScrollView(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  'Sessions',
+                                  style: TextStyle(fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 8),
+                                ...sessions.map((session) {
+                                  final sessionId = (session['session_id'] as num?)?.toInt() ?? 0;
+                                  final label = (session['device_label'] ?? session['user_agent'] ?? 'Unknown device').toString();
+                                  final ip = (session['client_ip'] ?? 'Unknown IP').toString();
+                                  final revokedAt = session['revoked_at'];
+                                  final isCurrent = session['current'] == true;
+                                  final isActive = revokedAt == null;
+                                  return ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text(
+                                      isCurrent ? '$label (current)' : label,
+                                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                                    ),
+                                    subtitle: Text('IP: $ip'),
+                                    trailing: isActive
+                                        ? TextButton(
+                                            onPressed: revoking ? null : () => revokeOne(sessionId),
+                                            child: const Text('Revoke'),
+                                          )
+                                        : const Text('Revoked', style: TextStyle(fontSize: 12)),
+                                  );
+                                }),
+                                const SizedBox(height: 12),
+                                const Divider(),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Registered Devices',
+                                  style: TextStyle(fontWeight: FontWeight.w700),
+                                ),
+                                const SizedBox(height: 8),
+                                ...devices.map((device) {
+                                  final platform = (device['platform'] ?? 'unknown').toString();
+                                  final appVersion = (device['app_version'] ?? '').toString();
+                                  final deviceId = (device['device_id'] ?? '').toString();
+                                  return ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text(platform.toUpperCase()),
+                                    subtitle: Text(
+                                      appVersion.isNotEmpty
+                                          ? '$deviceId • v$appVersion'
+                                          : deviceId,
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ),
+                          ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: revoking ? null : () => Navigator.pop(ctx),
+                  child: const Text('Close'),
+                ),
+                TextButton(
+                  onPressed: (revoking || loading) ? null : revokeAll,
+                  child: const Text('Revoke All Sessions'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 

@@ -1,18 +1,23 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Optional, List
+
+
+class StrictRequestModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 class UserBase(BaseModel):
     email: EmailStr
     name: Optional[str] = None
+    role: str = "user"
     google_calendar_connected: int = 0
     apple_health_connected: int = 0
 
 class UserCreate(UserBase):
-    password: str
+    password: str = Field(min_length=8, max_length=256)
 
-class UserLogin(BaseModel):
+class UserLogin(StrictRequestModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=256)
 
 class UserOut(UserBase):
     id: int
@@ -22,17 +27,18 @@ class UserOut(UserBase):
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str
     user: UserOut
 
-class SocialAuth(BaseModel):
-    token: str
-    name: Optional[str] = None
+class SocialAuth(StrictRequestModel):
+    token: str = Field(min_length=8, max_length=4096)
+    name: Optional[str] = Field(default=None, max_length=120)
     email: Optional[str] = None
-    provider: str # 'google' or 'apple'
+    provider: str = Field(min_length=3, max_length=20) # 'google' or 'apple'
 
 
-class ForgotPasswordRequest(BaseModel):
+class ForgotPasswordRequest(StrictRequestModel):
     email: EmailStr
 
 
@@ -43,9 +49,110 @@ class ForgotPasswordResponse(BaseModel):
     delivery: Optional[str] = None
 
 
-class ResetPasswordRequest(BaseModel):
-    token: str
-    new_password: str
+class ResetPasswordRequest(StrictRequestModel):
+    token: str = Field(min_length=16, max_length=512)
+    new_password: str = Field(min_length=8, max_length=256)
+
+
+class RefreshTokenRequest(StrictRequestModel):
+    refresh_token: Optional[str] = Field(default=None, min_length=16, max_length=4096)
+
+
+class LogoutRequest(StrictRequestModel):
+    refresh_token: Optional[str] = Field(default=None, min_length=16, max_length=4096)
+
+
+class ChangePasswordRequest(StrictRequestModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=8, max_length=256)
+
+
+class SessionItem(BaseModel):
+    session_id: int
+    issued_at: str
+    expires_at: str
+    last_used_at: Optional[str] = None
+    revoked_at: Optional[str] = None
+    revoked_reason: Optional[str] = None
+    client_ip: Optional[str] = None
+    user_agent: Optional[str] = None
+    device_label: Optional[str] = None
+    current: bool = False
+
+
+class DeviceItem(BaseModel):
+    id: int
+    device_id: str
+    platform: str
+    push_enabled: bool
+    app_version: Optional[str] = None
+    last_seen_at: Optional[str] = None
+
+
+class SessionInventoryResponse(BaseModel):
+    generated_at: str
+    total_sessions: int
+    active_sessions: int
+    sessions: List[SessionItem]
+    devices: List[DeviceItem]
+
+
+class EmailVerificationRequest(StrictRequestModel):
+    token: str = Field(min_length=16, max_length=512)
+
+
+class ResendVerificationRequest(StrictRequestModel):
+    email: EmailStr
+
+
+class VerificationResponse(BaseModel):
+    message: str
+    verification_token: Optional[str] = None
+    verification_link: Optional[str] = None
+    delivery: Optional[str] = None
+
+
+class AdminMfaSetupResponse(BaseModel):
+    mfa_enabled: bool
+    secret: str
+    otpauth_url: str
+
+
+class AdminMfaEnableRequest(StrictRequestModel):
+    code: str = Field(min_length=6, max_length=8)
+
+
+class AdminMfaDisableRequest(StrictRequestModel):
+    code: str = Field(min_length=6, max_length=8)
+
+
+class AdminMfaStatusResponse(BaseModel):
+    mfa_enabled: bool
+    message: str
+
+
+class AdminMfaRecoveryCodesStatusResponse(BaseModel):
+    total_codes: int
+    remaining_codes: int
+    used_codes: int
+
+
+class AdminMfaRecoveryCodesRegenerateResponse(BaseModel):
+    message: str
+    codes: List[str]
+    total_codes: int
+
+
+class AdminReauthRequest(StrictRequestModel):
+    password: str = Field(min_length=1, max_length=256)
+    mfa_code: Optional[str] = Field(default=None, min_length=6, max_length=8)
+    recovery_code: Optional[str] = Field(default=None, min_length=6, max_length=64)
+
+
+class AdminReauthResponse(BaseModel):
+    step_up_token: str
+    expires_at: str
+    method: str
 
 
 class MessageResponse(BaseModel):
@@ -100,12 +207,45 @@ class AdminUserStateResponse(BaseModel):
     message: str
 
 
-class AIAnalyzeEntryRequest(BaseModel):
-    transcript: str
-    summary: str
-    mood: str
+class AdminUserRoleUpdateRequest(StrictRequestModel):
+    role: str = Field(min_length=4, max_length=20)
+
+
+class AdminUserRoleResponse(BaseModel):
+    user_id: int
+    role: str
+    message: str
+
+
+class SecurityAuditLogItem(BaseModel):
+    event_id: str
+    occurred_at: str
+    event_type: str
+    severity: str
+    actor_user_id: Optional[int] = None
+    actor_email: Optional[str] = None
+    target_user_id: Optional[int] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
+    previous_hash: Optional[str] = None
+    record_hash: str
+
+
+class SecurityAuditLogListResponse(BaseModel):
+    generated_at: str
+    total: int
+    limit: int
+    offset: int
+    logs: List[SecurityAuditLogItem]
+
+
+class AIAnalyzeEntryRequest(StrictRequestModel):
+    transcript: str = Field(default="", max_length=12000)
+    summary: str = Field(default="", max_length=3000)
+    mood: str = Field(min_length=2, max_length=40)
     mood_confidence: Optional[float] = None
-    tags: List[str] = []
+    tags: List[str] = Field(default_factory=list, max_length=30)
 
 
 class AIAnalyzeEntryResponse(BaseModel):
@@ -117,20 +257,20 @@ class AIAnalyzeEntryResponse(BaseModel):
     crisis_resources: List[str] = []
 
 
-class AIWeeklyEntryInput(BaseModel):
-    timestamp: str
-    summary: str
-    mood: str
-    tags: List[str] = []
-    ai_summary: Optional[str] = None
-    transcript: Optional[str] = None
+class AIWeeklyEntryInput(StrictRequestModel):
+    timestamp: str = Field(min_length=5, max_length=64)
+    summary: str = Field(max_length=3000)
+    mood: str = Field(min_length=2, max_length=40)
+    tags: List[str] = Field(default_factory=list, max_length=30)
+    ai_summary: Optional[str] = Field(default=None, max_length=3000)
+    transcript: Optional[str] = Field(default=None, max_length=12000)
 
 
-class AIWeeklyInsightsRequest(BaseModel):
-    timeframe_label: Optional[str] = None
-    entries: List[AIWeeklyEntryInput]
-    memory_candidates: List[AIWeeklyEntryInput] = []
-    memory_snippets: List[str] = []
+class AIWeeklyInsightsRequest(StrictRequestModel):
+    timeframe_label: Optional[str] = Field(default=None, max_length=80)
+    entries: List[AIWeeklyEntryInput] = Field(min_length=1, max_length=90)
+    memory_candidates: List[AIWeeklyEntryInput] = Field(default_factory=list, max_length=120)
+    memory_snippets: List[str] = Field(default_factory=list, max_length=120)
 
 
 class AIWeeklyInsightsResponse(BaseModel):
@@ -322,17 +462,17 @@ class ObservabilityAlertsResponse(BaseModel):
     alerts: List[ObservabilityAlertItem]
 
 
-class GoogleCalendarAccessTokenRequest(BaseModel):
-    access_token: str
+class GoogleCalendarAccessTokenRequest(StrictRequestModel):
+    access_token: str = Field(min_length=8, max_length=4096)
 
 
-class GoogleCalendarEventCreateRequest(BaseModel):
-    access_token: str
-    summary: str
-    start_iso: str
-    end_iso: str
-    description: Optional[str] = None
-    timezone: Optional[str] = "UTC"
+class GoogleCalendarEventCreateRequest(StrictRequestModel):
+    access_token: str = Field(min_length=8, max_length=4096)
+    summary: str = Field(min_length=1, max_length=240)
+    start_iso: str = Field(min_length=8, max_length=80)
+    end_iso: str = Field(min_length=8, max_length=80)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    timezone: Optional[str] = Field(default="UTC", max_length=80)
 
 
 class GoogleCalendarEventOut(BaseModel):
@@ -344,25 +484,25 @@ class GoogleCalendarEventOut(BaseModel):
     end_iso: Optional[str] = None
 
 
-class GoogleCalendarLocalChange(BaseModel):
-    action: str
-    client_event_id: Optional[str] = None
-    external_event_id: Optional[str] = None
-    summary: Optional[str] = None
-    description: Optional[str] = None
-    start_iso: Optional[str] = None
-    end_iso: Optional[str] = None
-    timezone: Optional[str] = "UTC"
+class GoogleCalendarLocalChange(StrictRequestModel):
+    action: str = Field(min_length=3, max_length=20)
+    client_event_id: Optional[str] = Field(default=None, max_length=128)
+    external_event_id: Optional[str] = Field(default=None, max_length=128)
+    summary: Optional[str] = Field(default=None, max_length=240)
+    description: Optional[str] = Field(default=None, max_length=5000)
+    start_iso: Optional[str] = Field(default=None, max_length=80)
+    end_iso: Optional[str] = Field(default=None, max_length=80)
+    timezone: Optional[str] = Field(default="UTC", max_length=80)
 
 
-class GoogleCalendarSyncRunRequest(BaseModel):
-    access_token: str
-    local_changes: List[GoogleCalendarLocalChange] = []
+class GoogleCalendarSyncRunRequest(StrictRequestModel):
+    access_token: str = Field(min_length=8, max_length=4096)
+    local_changes: List[GoogleCalendarLocalChange] = Field(default_factory=list, max_length=500)
 
 
-class GoogleCalendarSyncSettingsRequest(BaseModel):
+class GoogleCalendarSyncSettingsRequest(StrictRequestModel):
     auto_sync_enabled: bool = True
-    sync_interval_minutes: int = 5
+    sync_interval_minutes: int = Field(default=5, ge=1, le=1440)
 
 
 class GoogleCalendarSyncStatusResponse(BaseModel):
@@ -388,21 +528,21 @@ class GoogleCalendarEventsResponse(BaseModel):
     events: List[GoogleCalendarEventOut]
 
 
-class NotificationDeviceRegisterRequest(BaseModel):
-    device_id: str
-    platform: str
-    push_token: str
+class NotificationDeviceRegisterRequest(StrictRequestModel):
+    device_id: str = Field(min_length=2, max_length=256)
+    platform: str = Field(min_length=2, max_length=32)
+    push_token: str = Field(min_length=16, max_length=4096)
     push_enabled: bool = True
-    app_version: Optional[str] = None
+    app_version: Optional[str] = Field(default=None, max_length=64)
 
 
-class NotificationPreferencesRequest(BaseModel):
+class NotificationPreferencesRequest(StrictRequestModel):
     notifications_enabled: bool = True
     push_enabled: bool = True
     daily_reminder_enabled: bool = False
-    daily_reminder_hour: int = 20
-    daily_reminder_minute: int = 0
-    timezone: str = "UTC"
+    daily_reminder_hour: int = Field(default=20, ge=0, le=23)
+    daily_reminder_minute: int = Field(default=0, ge=0, le=59)
+    timezone: str = Field(default="UTC", max_length=80)
 
 
 class NotificationPreferencesResponse(BaseModel):
@@ -414,11 +554,19 @@ class NotificationPreferencesResponse(BaseModel):
     timezone: str
 
 
-class NotificationTriggerRequest(BaseModel):
-    event_type: str
-    title: str
-    body: str
-    data: dict = {}
+class NotificationTriggerRequest(StrictRequestModel):
+    event_type: str = Field(min_length=2, max_length=64)
+    title: str = Field(min_length=1, max_length=160)
+    body: str = Field(min_length=1, max_length=4000)
+    data: dict = Field(default_factory=dict)
+
+
+class UploadValidationResponse(BaseModel):
+    filename: str
+    content_type: str
+    size_bytes: int
+    accepted: bool
+    scan_status: str
 
 
 class NotificationTriggerResponse(BaseModel):

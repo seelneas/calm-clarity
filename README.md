@@ -54,6 +54,8 @@ Set these in backend env for core auth:
 - `SECRET_KEY`
 - `GOOGLE_CLIENT_ID`
 
+Production recommendation: set secret vars as managed-secret references (`aws-sm://`, `gcp-sm://`, `azure-kv://`, `vault://`, `file://`) and keep `MANAGED_SECRETS_REQUIRED_IN_PRODUCTION=true`.
+
 Optional but common:
 
 - AI provider key(s): `GROQ_API_KEY` or `GEMINI_API_KEY` or `OPENAI_API_KEY`
@@ -61,6 +63,27 @@ Optional but common:
 - Admin endpoints: `ADMIN_API_KEY` (optional)
 
 If no AI key is set, backend falls back to rule-based responses.
+
+## Secret Lifecycle Management
+
+- Runtime secret loading is centralized in `backend/secret_manager.py`.
+- In production, plaintext secret values are rejected when `MANAGED_SECRETS_REQUIRED_IN_PRODUCTION=true`.
+- Supported secret references:
+	- `aws-sm://...`
+	- `gcp-sm://...`
+	- `azure-kv://...`
+	- `vault://...`
+	- `file://...`
+
+### Rotation workflow
+
+Generate a provider-specific rotation plan from `backend/`:
+
+```bash
+python scripts/rotate_secrets.py --provider aws --env production
+```
+
+Then follow `docs/security/secret-rotation-runbook.md` to apply, deploy, validate, and rollback safely.
 
 ## Queue Worker (Optional, recommended for async AI jobs)
 

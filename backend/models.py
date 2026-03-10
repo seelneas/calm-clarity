@@ -8,7 +8,12 @@ class User(Base):
     name = Column(String)
     email = Column(String, unique=True, index=True)
     hashed_password = Column(String)
+    role = Column(String, default="user")
     is_active = Column(Integer, default=1)
+    email_verified = Column(Integer, default=0)
+    token_version = Column(Integer, default=0)
+    admin_mfa_enabled = Column(Integer, default=0)
+    admin_mfa_secret = Column(String, nullable=True)
     google_calendar_connected = Column(Integer, default=0)  # 0: Not Linked, 1: Connected
     apple_health_connected = Column(Integer, default=0)     # 0: Not Linked, 1: Connected
 
@@ -22,6 +27,88 @@ class PasswordResetToken(Base):
     created_at = Column(DateTime, nullable=False)
     expires_at = Column(DateTime, nullable=False, index=True)
     used_at = Column(DateTime, nullable=True)
+
+
+class EmailVerificationToken(Base):
+    __tablename__ = "email_verification_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    token_hash = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    used_at = Column(DateTime, nullable=True)
+
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    jti = Column(String, unique=True, index=True, nullable=False)
+    family_id = Column(String, index=True, nullable=False)
+    token_hash = Column(String, unique=True, index=True, nullable=False)
+    issued_at = Column(DateTime, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    last_used_at = Column(DateTime, nullable=True, index=True)
+    client_ip = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    device_label = Column(String, nullable=True)
+    revoked_at = Column(DateTime, nullable=True, index=True)
+    replaced_by_jti = Column(String, nullable=True)
+    revoked_reason = Column(String, nullable=True)
+
+
+class AccessTokenBlocklist(Base):
+    __tablename__ = "access_token_blocklist"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    jti = Column(String, unique=True, index=True, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    revoked_at = Column(DateTime, nullable=False, index=True)
+    revoked_reason = Column(String, nullable=True)
+
+
+class SecurityAuditLog(Base):
+    __tablename__ = "security_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(String, unique=True, index=True, nullable=False)
+    occurred_at = Column(DateTime, nullable=False, index=True)
+    event_type = Column(String, nullable=False, index=True)
+    severity = Column(String, nullable=False, index=True)  # info | warn | critical
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    actor_email = Column(String, nullable=True, index=True)
+    target_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    metadata_json = Column(Text, nullable=True)
+    previous_hash = Column(String, nullable=True)
+    record_hash = Column(String, nullable=False, index=True)
+
+
+class AdminMfaRecoveryCode(Base):
+    __tablename__ = "admin_mfa_recovery_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    code_hash = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, index=True)
+    used_at = Column(DateTime, nullable=True, index=True)
+    replaced_at = Column(DateTime, nullable=True, index=True)
+
+
+class AdminStepUpSession(Base):
+    __tablename__ = "admin_step_up_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    token_hash = Column(String, nullable=False, unique=True, index=True)
+    verified_at = Column(DateTime, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    used_at = Column(DateTime, nullable=True, index=True)
+    used_for_action = Column(String, nullable=True)
 
 
 class AIJob(Base):
