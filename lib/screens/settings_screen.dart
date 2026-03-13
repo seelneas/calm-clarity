@@ -884,7 +884,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         builder: (context, setLocalState) {
           return AlertDialog(
             backgroundColor: Theme.of(context).cardColor,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
             title: const Text('Change Password'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
@@ -892,7 +894,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 TextField(
                   controller: currentController,
                   obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Current password'),
+                  decoration: const InputDecoration(
+                    labelText: 'Current password',
+                  ),
                 ),
                 const SizedBox(height: 10),
                 TextField(
@@ -904,7 +908,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 TextField(
                   controller: confirmController,
                   obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Confirm new password'),
+                  decoration: const InputDecoration(
+                    labelText: 'Confirm new password',
+                  ),
                 ),
               ],
             ),
@@ -920,7 +926,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         final current = currentController.text.trim();
                         final next = nextController.text.trim();
                         final confirm = confirmController.text.trim();
-                        if (current.isEmpty || next.isEmpty || confirm.isEmpty) {
+                        if (current.isEmpty ||
+                            next.isEmpty ||
+                            confirm.isEmpty) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                               content: Text('Fill all password fields.'),
@@ -940,25 +948,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         }
 
                         setLocalState(() => submitting = true);
-                        final result = await AuthService.changePassword(current, next);
+                        final result = await AuthService.changePassword(
+                          current,
+                          next,
+                        );
                         setLocalState(() => submitting = false);
-                        if (!mounted) return;
+                        if (!ctx.mounted) return;
 
                         if (result['success'] == true) {
-                          if (context.mounted) Navigator.pop(ctx);
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          Navigator.pop(ctx);
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(this.context).showSnackBar(
                             SnackBar(
-                              content: Text((result['message'] ?? 'Password changed').toString()),
+                              content: Text(
+                                (result['message'] ?? 'Password changed')
+                                    .toString(),
+                              ),
                               behavior: SnackBarBehavior.floating,
                             ),
                           );
-                          Navigator.pushNamedAndRemoveUntil(context, '/auth', (route) => false);
+                          Navigator.pushNamedAndRemoveUntil(
+                            this.context,
+                            '/auth',
+                            (route) => false,
+                          );
                           return;
                         }
 
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        ScaffoldMessenger.of(ctx).showSnackBar(
                           SnackBar(
-                            content: Text((result['message'] ?? 'Password change failed').toString()),
+                            content: Text(
+                              (result['message'] ?? 'Password change failed')
+                                  .toString(),
+                            ),
                             behavior: SnackBarBehavior.floating,
                           ),
                         );
@@ -1009,7 +1031,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 return;
               }
               setLocalState(() {
-                error = (response['message'] ?? 'Failed to load sessions').toString();
+                error = (response['message'] ?? 'Failed to load sessions')
+                    .toString();
                 loading = false;
               });
             }
@@ -1021,7 +1044,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text((result['message'] ?? 'Session revoke failed').toString()),
+                  content: Text(
+                    (result['message'] ?? 'Session revoke failed').toString(),
+                  ),
                   behavior: SnackBarBehavior.floating,
                 ),
               );
@@ -1037,13 +1062,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
               if (!context.mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text((result['message'] ?? 'Failed to revoke all sessions').toString()),
+                  content: Text(
+                    (result['message'] ?? 'Failed to revoke all sessions')
+                        .toString(),
+                  ),
                   behavior: SnackBarBehavior.floating,
                 ),
               );
               if (result['success'] == true) {
                 Navigator.pop(ctx);
-                Navigator.pushNamedAndRemoveUntil(context, '/auth', (route) => false);
+                Navigator.pushNamedAndRemoveUntil(
+                  context,
+                  '/auth',
+                  (route) => false,
+                );
               }
             }
 
@@ -1053,71 +1085,90 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
             return AlertDialog(
               backgroundColor: Theme.of(context).cardColor,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
               title: const Text('Active Sessions & Devices'),
               content: SizedBox(
                 width: 520,
                 child: loading
                     ? const Center(child: CircularProgressIndicator())
                     : error != null
-                        ? Text(error!)
-                        : SingleChildScrollView(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Text(
-                                  'Sessions',
-                                  style: TextStyle(fontWeight: FontWeight.w700),
-                                ),
-                                const SizedBox(height: 8),
-                                ...sessions.map((session) {
-                                  final sessionId = (session['session_id'] as num?)?.toInt() ?? 0;
-                                  final label = (session['device_label'] ?? session['user_agent'] ?? 'Unknown device').toString();
-                                  final ip = (session['client_ip'] ?? 'Unknown IP').toString();
-                                  final revokedAt = session['revoked_at'];
-                                  final isCurrent = session['current'] == true;
-                                  final isActive = revokedAt == null;
-                                  return ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text(
-                                      isCurrent ? '$label (current)' : label,
-                                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                                    ),
-                                    subtitle: Text('IP: $ip'),
-                                    trailing: isActive
-                                        ? TextButton(
-                                            onPressed: revoking ? null : () => revokeOne(sessionId),
-                                            child: const Text('Revoke'),
-                                          )
-                                        : const Text('Revoked', style: TextStyle(fontSize: 12)),
-                                  );
-                                }),
-                                const SizedBox(height: 12),
-                                const Divider(),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'Registered Devices',
-                                  style: TextStyle(fontWeight: FontWeight.w700),
-                                ),
-                                const SizedBox(height: 8),
-                                ...devices.map((device) {
-                                  final platform = (device['platform'] ?? 'unknown').toString();
-                                  final appVersion = (device['app_version'] ?? '').toString();
-                                  final deviceId = (device['device_id'] ?? '').toString();
-                                  return ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text(platform.toUpperCase()),
-                                    subtitle: Text(
-                                      appVersion.isNotEmpty
-                                          ? '$deviceId • v$appVersion'
-                                          : deviceId,
-                                    ),
-                                  );
-                                }),
-                              ],
+                    ? Text(error!)
+                    : SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text(
+                              'Sessions',
+                              style: TextStyle(fontWeight: FontWeight.w700),
                             ),
-                          ),
+                            const SizedBox(height: 8),
+                            ...sessions.map((session) {
+                              final sessionId =
+                                  (session['session_id'] as num?)?.toInt() ?? 0;
+                              final label =
+                                  (session['device_label'] ??
+                                          session['user_agent'] ??
+                                          'Unknown device')
+                                      .toString();
+                              final ip = (session['client_ip'] ?? 'Unknown IP')
+                                  .toString();
+                              final revokedAt = session['revoked_at'];
+                              final isCurrent = session['current'] == true;
+                              final isActive = revokedAt == null;
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(
+                                  isCurrent ? '$label (current)' : label,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                subtitle: Text('IP: $ip'),
+                                trailing: isActive
+                                    ? TextButton(
+                                        onPressed: revoking
+                                            ? null
+                                            : () => revokeOne(sessionId),
+                                        child: const Text('Revoke'),
+                                      )
+                                    : const Text(
+                                        'Revoked',
+                                        style: TextStyle(fontSize: 12),
+                                      ),
+                              );
+                            }),
+                            const SizedBox(height: 12),
+                            const Divider(),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Registered Devices',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 8),
+                            ...devices.map((device) {
+                              final platform = (device['platform'] ?? 'unknown')
+                                  .toString();
+                              final appVersion = (device['app_version'] ?? '')
+                                  .toString();
+                              final deviceId = (device['device_id'] ?? '')
+                                  .toString();
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(platform.toUpperCase()),
+                                subtitle: Text(
+                                  appVersion.isNotEmpty
+                                      ? '$deviceId • v$appVersion'
+                                      : deviceId,
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
               ),
               actions: [
                 TextButton(

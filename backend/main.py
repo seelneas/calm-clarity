@@ -73,9 +73,6 @@ AI_OPS_QUEUE_WARN_DEPTH = int(os.getenv("AI_OPS_QUEUE_WARN_DEPTH", "100"))
 AI_OPS_FAILED_REGISTRY_WARN = int(os.getenv("AI_OPS_FAILED_REGISTRY_WARN", "20"))
 AI_OPS_MIN_HEARTBEAT_WORKERS = int(os.getenv("AI_OPS_MIN_HEARTBEAT_WORKERS", "1"))
 AI_WORKER_HEARTBEAT_STALE_SECONDS = int(os.getenv("AI_WORKER_HEARTBEAT_STALE_SECONDS", "40"))
-GOOGLE_CALENDAR_SYNC_DEFAULT_INTERVAL_MINUTES = int(
-    os.getenv("GOOGLE_CALENDAR_SYNC_DEFAULT_INTERVAL_MINUTES", "5")
-)
 SEMANTIC_MEMORY_ENABLED = os.getenv("SEMANTIC_MEMORY_ENABLED", "true").strip().lower() in {"1", "true", "yes"}
 SEMANTIC_MEMORY_MODEL = os.getenv("SEMANTIC_MEMORY_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 SEMANTIC_MEMORY_TOP_K = int(os.getenv("SEMANTIC_MEMORY_TOP_K", "5"))
@@ -2428,314 +2425,6 @@ def _process_ai_job(job_id: str) -> None:
         db.close()
 
 
-def _google_headers(access_token: str) -> dict:
-    return {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-    }
-
-
-def _google_calendar_connected(access_token: str) -> bool:
-    response = requests.get(
-        "https://www.googleapis.com/calendar/v3/users/me/calendarList",
-        headers=_google_headers(access_token),
-        params={"maxResults": 1},
-        timeout=12,
-    )
-    return response.status_code == 200
-
-
-def _map_calendar_event(item: dict) -> schemas.GoogleCalendarEventOut:
-    start_iso = (item.get("start", {}) or {}).get("dateTime") or (item.get("start", {}) or {}).get("date")
-    end_iso = (item.get("end", {}) or {}).get("dateTime") or (item.get("end", {}) or {}).get("date")
-    return schemas.GoogleCalendarEventOut(
-        id=item.get("id", ""),
-        summary=item.get("summary", "Untitled"),
-        status=item.get("status"),
-        html_link=item.get("htmlLink"),
-        start_iso=start_iso,
-        end_iso=end_iso,
-    )
-
-
-def _extract_event_timezone(item: dict) -> str:
-    start = item.get("start", {}) or {}
-    end = item.get("end", {}) or {}
-    return start.get("timeZone") or end.get("timeZone") or "UTC"
-
-
-def _get_or_create_google_sync_state(db: Session, user_id: int) -> models.GoogleCalendarSyncState:
-    state = db.query(models.GoogleCalendarSyncState).filter(
-        models.GoogleCalendarSyncState.user_id == user_id,
-    ).first()
-    if state is not None:
-        return state
-
-    now = _utc_now()
-    state = models.GoogleCalendarSyncState(
-        user_id=user_id,
-        auto_sync_enabled=1,
-        sync_interval_minutes=max(1, GOOGLE_CALENDAR_SYNC_DEFAULT_INTERVAL_MINUTES),
-        last_sync_at=None,
-        last_error=None,
-        pull_cursor_iso=None,
-        updated_at=now,
-    )
-    db.add(state)
-    db.flush()
-    return state
-
-
-def _upsert_google_event_mirror(
-    db: Session,
-    *,
-    user_id: int,
-    item: dict,
-    source: str,
-) -> models.GoogleCalendarEventMirror:
-    external_event_id = (item.get("id") or "").strip() or None
-    private_props = ((item.get("extendedProperties") or {}).get("private") or {})
-    client_event_id = (private_props.get("calm_client_event_id") or "").strip() or None
-
-    mirror = None
-    if external_event_id:
-        mirror = db.query(models.GoogleCalendarEventMirror).filter(
-            models.GoogleCalendarEventMirror.user_id == user_id,
-            models.GoogleCalendarEventMirror.external_event_id == external_event_id,
-        ).first()
-
-    if mirror is None and client_event_id:
-        mirror = db.query(models.GoogleCalendarEventMirror).filter(
-            models.GoogleCalendarEventMirror.user_id == user_id,
-            models.GoogleCalendarEventMirror.client_event_id == client_event_id,
-        ).first()
-
-    now = _utc_now()
-    if mirror is None:
-        mirror = models.GoogleCalendarEventMirror(
-            user_id=user_id,
-            source=source,
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(mirror)
-
-    start_iso = (item.get("start", {}) or {}).get("dateTime") or (item.get("start", {}) or {}).get("date")
-    end_iso = (item.get("end", {}) or {}).get("dateTime") or (item.get("end", {}) or {}).get("date")
-    status_value = (item.get("status") or "confirmed").strip().lower()
-
-    mirror.client_event_id = client_event_id or mirror.client_event_id
-    mirror.external_event_id = external_event_id or mirror.external_event_id
-    mirror.summary = (item.get("summary") or "Untitled").strip() or "Untitled"
-    mirror.description = item.get("description")
-    mirror.status = status_value
-    mirror.html_link = item.get("htmlLink")
-    mirror.start_iso = start_iso
-    mirror.end_iso = end_iso
-    mirror.timezone = _extract_event_timezone(item)
-    mirror.etag = item.get("etag")
-    mirror.updated_remote_iso = item.get("updated")
-    mirror.source = source
-    mirror.deleted = 1 if status_value == "cancelled" else 0
-    mirror.updated_at = now
-    return mirror
-
-
-def _mirror_to_event_schema(mirror: models.GoogleCalendarEventMirror) -> schemas.GoogleCalendarEventOut:
-    return schemas.GoogleCalendarEventOut(
-        id=(mirror.external_event_id or mirror.client_event_id or ""),
-        summary=mirror.summary or "Untitled",
-        status=mirror.status,
-        html_link=mirror.html_link,
-        start_iso=mirror.start_iso,
-        end_iso=mirror.end_iso,
-    )
-
-
-def _calendar_pull_sync(
-    db: Session,
-    *,
-    user_id: int,
-    access_token: str,
-    state: models.GoogleCalendarSyncState,
-) -> tuple[int, str | None]:
-    pulled_count = 0
-    max_updated = state.pull_cursor_iso
-    page_token = None
-
-    while True:
-        params = {
-            "singleEvents": "true",
-            "showDeleted": "true",
-            "maxResults": 100,
-        }
-        if state.pull_cursor_iso:
-            params["updatedMin"] = state.pull_cursor_iso
-        else:
-            params["timeMin"] = (datetime.utcnow() - timedelta(days=90)).isoformat() + "Z"
-        if page_token:
-            params["pageToken"] = page_token
-
-        response = requests.get(
-            "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-            headers=_google_headers(access_token),
-            params=params,
-            timeout=20,
-        )
-        if response.status_code >= 400:
-            raise HTTPException(status_code=400, detail="Failed to sync Google Calendar events")
-
-        data = response.json()
-        for item in data.get("items", []):
-            _upsert_google_event_mirror(db, user_id=user_id, item=item, source="google")
-            pulled_count += 1
-            updated_value = (item.get("updated") or "").strip()
-            if updated_value and (max_updated is None or updated_value > max_updated):
-                max_updated = updated_value
-
-        page_token = data.get("nextPageToken")
-        if not page_token:
-            break
-
-    return pulled_count, max_updated
-
-
-def _queue_local_calendar_change(
-    db: Session,
-    *,
-    user_id: int,
-    change: schemas.GoogleCalendarLocalChange,
-) -> None:
-    action = (change.action or "").strip().lower()
-    if action not in {"create", "update", "delete"}:
-        raise HTTPException(status_code=400, detail="Invalid local change action")
-
-    now = _utc_now()
-    pending = models.GoogleCalendarPendingChange(
-        id=str(uuid.uuid4()),
-        user_id=user_id,
-        action=action,
-        client_event_id=(change.client_event_id or "").strip() or None,
-        external_event_id=(change.external_event_id or "").strip() or None,
-        payload_json=json.dumps(change.model_dump()),
-        status="pending",
-        error_message=None,
-        created_at=now,
-        updated_at=now,
-    )
-    db.add(pending)
-
-
-def _build_google_event_payload(payload: dict, client_event_id: str | None) -> dict:
-    timezone = (payload.get("timezone") or "UTC").strip() or "UTC"
-    body = {
-        "summary": _sanitize_rich_text((payload.get("summary") or "Untitled").strip() or "Untitled", max_len=240),
-        "description": _sanitize_rich_text(payload.get("description") or "", max_len=5000),
-        "start": {
-            "dateTime": payload.get("start_iso"),
-            "timeZone": timezone,
-        },
-        "end": {
-            "dateTime": payload.get("end_iso"),
-            "timeZone": timezone,
-        },
-    }
-    if client_event_id:
-        body["extendedProperties"] = {
-            "private": {"calm_client_event_id": client_event_id},
-        }
-    return body
-
-
-def _process_calendar_push_queue(
-    db: Session,
-    *,
-    user_id: int,
-    access_token: str,
-) -> tuple[int, int]:
-    pending_rows = db.query(models.GoogleCalendarPendingChange).filter(
-        models.GoogleCalendarPendingChange.user_id == user_id,
-        models.GoogleCalendarPendingChange.status == "pending",
-    ).order_by(models.GoogleCalendarPendingChange.created_at.asc()).all()
-
-    pushed_count = 0
-    failed_count = 0
-    now = _utc_now()
-
-    for row in pending_rows:
-        try:
-            payload_data = json.loads(row.payload_json or "{}")
-        except Exception:
-            payload_data = {}
-
-        action = (row.action or "").strip().lower()
-        client_event_id = (row.client_event_id or "").strip() or None
-        external_event_id = (row.external_event_id or "").strip() or None
-
-        if not external_event_id and client_event_id:
-            mirror = db.query(models.GoogleCalendarEventMirror).filter(
-                models.GoogleCalendarEventMirror.user_id == user_id,
-                models.GoogleCalendarEventMirror.client_event_id == client_event_id,
-            ).first()
-            if mirror and (mirror.external_event_id or "").strip():
-                external_event_id = mirror.external_event_id.strip()
-
-        try:
-            if action == "create":
-                response = requests.post(
-                    "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-                    headers=_google_headers(access_token),
-                    json=_build_google_event_payload(payload_data, client_event_id),
-                    timeout=20,
-                )
-                if response.status_code >= 400:
-                    raise HTTPException(status_code=400, detail=response.text[:220])
-                _upsert_google_event_mirror(db, user_id=user_id, item=response.json(), source="app")
-
-            elif action == "update":
-                if not external_event_id:
-                    raise HTTPException(status_code=400, detail="Missing event id for update")
-                response = requests.patch(
-                    f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{external_event_id}",
-                    headers=_google_headers(access_token),
-                    json=_build_google_event_payload(payload_data, client_event_id),
-                    timeout=20,
-                )
-                if response.status_code >= 400:
-                    raise HTTPException(status_code=400, detail=response.text[:220])
-                _upsert_google_event_mirror(db, user_id=user_id, item=response.json(), source="app")
-
-            elif action == "delete":
-                if not external_event_id:
-                    raise HTTPException(status_code=400, detail="Missing event id for delete")
-                response = requests.delete(
-                    f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{external_event_id}",
-                    headers=_google_headers(access_token),
-                    timeout=20,
-                )
-                if response.status_code >= 400 and response.status_code != 410:
-                    raise HTTPException(status_code=400, detail=response.text[:220])
-                mirror = db.query(models.GoogleCalendarEventMirror).filter(
-                    models.GoogleCalendarEventMirror.user_id == user_id,
-                    models.GoogleCalendarEventMirror.external_event_id == external_event_id,
-                ).first()
-                if mirror is not None:
-                    mirror.deleted = 1
-                    mirror.status = "cancelled"
-                    mirror.updated_at = now
-
-            row.status = "applied"
-            row.error_message = None
-            row.updated_at = now
-            pushed_count += 1
-        except Exception as error:
-            row.status = "failed"
-            row.error_message = str(error)[:400]
-            row.updated_at = now
-            failed_count += 1
-
-    return pushed_count, failed_count
-
 Base.metadata.create_all(bind=engine)
 _ensure_user_active_column()
 _ensure_user_security_columns()
@@ -2921,7 +2610,6 @@ def login(
 @app.post("/update_integrations", response_model=schemas.UserOut)
 def update_integrations(
     email: str,
-    google: int,
     apple: int,
     current_user: models.User = Depends(_get_current_user),
     db: Session = Depends(get_db),
@@ -2932,7 +2620,6 @@ def update_integrations(
 
     _assert_self_or_admin(current_user, target_user.id)
     
-    target_user.google_calendar_connected = google
     target_user.apple_health_connected = apple
     db.commit()
     db.refresh(target_user)
@@ -3612,219 +3299,6 @@ def admin_mfa_disable(
     return {"mfa_enabled": False, "message": "Admin MFA disabled"}
 
 
-@app.post("/integrations/google-calendar/connect", response_model=schemas.MessageResponse)
-def connect_google_calendar(
-    payload: schemas.GoogleCalendarAccessTokenRequest,
-    user: models.User = Depends(_get_current_user),
-    db: Session = Depends(get_db),
-):
-    if not _google_calendar_connected(payload.access_token):
-        raise HTTPException(status_code=400, detail="Invalid Google Calendar access token")
-
-    user.google_calendar_connected = 1
-    state = _get_or_create_google_sync_state(db, user.id)
-    state.last_error = None
-    state.updated_at = _utc_now()
-    db.commit()
-    return {"message": "Google Calendar connected"}
-
-
-@app.post("/integrations/google-calendar/disconnect", response_model=schemas.MessageResponse)
-def disconnect_google_calendar(
-    user: models.User = Depends(_get_current_user),
-    db: Session = Depends(get_db),
-):
-    user.google_calendar_connected = 0
-    state = db.query(models.GoogleCalendarSyncState).filter(
-        models.GoogleCalendarSyncState.user_id == user.id,
-    ).first()
-    if state is not None:
-        state.pull_cursor_iso = None
-        state.last_sync_at = None
-        state.last_error = None
-        state.updated_at = _utc_now()
-    db.commit()
-    return {"message": "Google Calendar disconnected"}
-
-
-@app.post("/integrations/google-calendar/events", response_model=schemas.GoogleCalendarEventsResponse)
-def list_google_calendar_events(
-    payload: schemas.GoogleCalendarAccessTokenRequest,
-    user: models.User = Depends(_get_current_user),
-):
-    response = requests.get(
-        "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-        headers=_google_headers(payload.access_token),
-        params={
-            "singleEvents": "true",
-            "orderBy": "startTime",
-            "timeMin": datetime.utcnow().isoformat() + "Z",
-            "maxResults": 10,
-        },
-        timeout=12,
-    )
-    if response.status_code >= 400:
-        raise HTTPException(status_code=400, detail="Failed to fetch Google Calendar events")
-
-    data = response.json()
-    items = data.get("items", [])
-    events = [_map_calendar_event(item) for item in items]
-    return {
-        "connected": bool(user.google_calendar_connected),
-        "events": events,
-    }
-
-
-@app.post("/integrations/google-calendar/events/create", response_model=schemas.GoogleCalendarEventOut)
-def create_google_calendar_event(
-    payload: schemas.GoogleCalendarEventCreateRequest,
-    _: models.User = Depends(_get_current_user),
-):
-    event_payload = {
-        "summary": _sanitize_rich_text(payload.summary, max_len=240),
-        "description": _sanitize_rich_text(payload.description or "", max_len=5000),
-        "start": {
-            "dateTime": payload.start_iso,
-            "timeZone": payload.timezone or "UTC",
-        },
-        "end": {
-            "dateTime": payload.end_iso,
-            "timeZone": payload.timezone or "UTC",
-        },
-    }
-
-    response = requests.post(
-        "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-        headers=_google_headers(payload.access_token),
-        json=event_payload,
-        timeout=12,
-    )
-    if response.status_code >= 400:
-        raise HTTPException(status_code=400, detail="Failed to create Google Calendar event")
-
-    return _map_calendar_event(response.json())
-
-
-@app.get(
-    "/integrations/google-calendar/sync/status",
-    response_model=schemas.GoogleCalendarSyncStatusResponse,
-)
-def get_google_calendar_sync_status(
-    user: models.User = Depends(_get_current_user),
-    db: Session = Depends(get_db),
-):
-    state = _get_or_create_google_sync_state(db, user.id)
-    pending_count = db.query(models.GoogleCalendarPendingChange).filter(
-        models.GoogleCalendarPendingChange.user_id == user.id,
-        models.GoogleCalendarPendingChange.status == "pending",
-    ).count()
-    db.commit()
-    return {
-        "connected": bool(user.google_calendar_connected),
-        "auto_sync_enabled": bool(state.auto_sync_enabled),
-        "sync_interval_minutes": int(state.sync_interval_minutes or GOOGLE_CALENDAR_SYNC_DEFAULT_INTERVAL_MINUTES),
-        "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
-        "last_error": state.last_error,
-        "pending_count": int(pending_count),
-    }
-
-
-@app.put(
-    "/integrations/google-calendar/sync/settings",
-    response_model=schemas.GoogleCalendarSyncStatusResponse,
-)
-def update_google_calendar_sync_settings(
-    payload: schemas.GoogleCalendarSyncSettingsRequest,
-    user: models.User = Depends(_get_current_user),
-    db: Session = Depends(get_db),
-):
-    state = _get_or_create_google_sync_state(db, user.id)
-    state.auto_sync_enabled = 1 if payload.auto_sync_enabled else 0
-    state.sync_interval_minutes = max(1, min(int(payload.sync_interval_minutes), 60))
-    state.updated_at = _utc_now()
-    db.commit()
-
-    pending_count = db.query(models.GoogleCalendarPendingChange).filter(
-        models.GoogleCalendarPendingChange.user_id == user.id,
-        models.GoogleCalendarPendingChange.status == "pending",
-    ).count()
-    return {
-        "connected": bool(user.google_calendar_connected),
-        "auto_sync_enabled": bool(state.auto_sync_enabled),
-        "sync_interval_minutes": int(state.sync_interval_minutes),
-        "last_sync_at": state.last_sync_at.isoformat() if state.last_sync_at else None,
-        "last_error": state.last_error,
-        "pending_count": int(pending_count),
-    }
-
-
-@app.post(
-    "/integrations/google-calendar/sync/run",
-    response_model=schemas.GoogleCalendarSyncRunResponse,
-)
-def run_google_calendar_sync(
-    payload: schemas.GoogleCalendarSyncRunRequest,
-    user: models.User = Depends(_get_current_user),
-    db: Session = Depends(get_db),
-):
-    if not bool(user.google_calendar_connected):
-        raise HTTPException(status_code=400, detail="Google Calendar is not connected")
-    if not _google_calendar_connected(payload.access_token):
-        raise HTTPException(status_code=400, detail="Invalid Google Calendar access token")
-
-    now = _utc_now()
-    state = _get_or_create_google_sync_state(db, user.id)
-    state.last_error = None
-
-    for change in payload.local_changes or []:
-        _queue_local_calendar_change(db, user_id=user.id, change=change)
-
-    pulled_count = 0
-    pushed_count = 0
-    failed_count = 0
-
-    try:
-        pushed_count, failed_count = _process_calendar_push_queue(
-            db,
-            user_id=user.id,
-            access_token=payload.access_token,
-        )
-        pulled_count, next_cursor = _calendar_pull_sync(
-            db,
-            user_id=user.id,
-            access_token=payload.access_token,
-            state=state,
-        )
-        state.pull_cursor_iso = next_cursor or state.pull_cursor_iso
-        state.last_sync_at = now
-        state.updated_at = now
-    except Exception as error:
-        state.last_error = str(error)[:400]
-        state.updated_at = now
-        db.commit()
-        raise
-
-    db.commit()
-
-    events_rows = db.query(models.GoogleCalendarEventMirror).filter(
-        models.GoogleCalendarEventMirror.user_id == user.id,
-        models.GoogleCalendarEventMirror.deleted == 0,
-    ).order_by(models.GoogleCalendarEventMirror.updated_at.desc()).limit(100).all()
-    pending_count = db.query(models.GoogleCalendarPendingChange).filter(
-        models.GoogleCalendarPendingChange.user_id == user.id,
-        models.GoogleCalendarPendingChange.status == "pending",
-    ).count()
-
-    return {
-        "synced_at": now.isoformat(),
-        "pulled_count": int(pulled_count),
-        "pushed_count": int(pushed_count),
-        "failed_count": int(failed_count),
-        "pending_count": int(pending_count),
-        "events": [_mirror_to_event_schema(row).model_dump() for row in events_rows],
-    }
-
-
 @app.post("/notifications/devices/register", response_model=schemas.MessageResponse)
 def register_notification_device(
     payload: schemas.NotificationDeviceRegisterRequest,
@@ -4099,9 +3573,6 @@ def admin_users_summary(
     seven_days_ago = now - timedelta(days=7)
 
     total_users = db.query(models.User).count()
-    users_with_google_calendar = db.query(models.User).filter(
-        models.User.google_calendar_connected == 1,
-    ).count()
     users_with_apple_health = db.query(models.User).filter(
         models.User.apple_health_connected == 1,
     ).count()
@@ -4120,7 +3591,6 @@ def admin_users_summary(
     return {
         "generated_at": now.isoformat(),
         "total_users": int(total_users),
-        "users_with_google_calendar": int(users_with_google_calendar),
         "users_with_apple_health": int(users_with_apple_health),
         "users_active_last_7_days": int(users_active_last_7_days),
         "ai_requests_last_7_days": int(ai_requests_last_7_days),
@@ -4209,7 +3679,6 @@ def admin_list_users(
                 "name": user.name,
                 "email": user.email,
                 "is_active": bool(user.is_active),
-                "google_calendar_connected": bool(user.google_calendar_connected),
                 "apple_health_connected": bool(user.apple_health_connected),
                 "ai_requests_last_7_days": int(ai_7d_map.get(user.id, 0)),
                 "ai_requests_today": int(ai_today_map.get(user.id, 0)),
@@ -4343,9 +3812,6 @@ def admin_delete_user(
     db.query(models.NotificationDevice).filter(models.NotificationDevice.user_id == user_id).delete(synchronize_session=False)
     db.query(models.NotificationPreference).filter(models.NotificationPreference.user_id == user_id).delete(synchronize_session=False)
     db.query(models.NotificationLog).filter(models.NotificationLog.user_id == user_id).delete(synchronize_session=False)
-    db.query(models.GoogleCalendarPendingChange).filter(models.GoogleCalendarPendingChange.user_id == user_id).delete(synchronize_session=False)
-    db.query(models.GoogleCalendarEventMirror).filter(models.GoogleCalendarEventMirror.user_id == user_id).delete(synchronize_session=False)
-    db.query(models.GoogleCalendarSyncState).filter(models.GoogleCalendarSyncState.user_id == user_id).delete(synchronize_session=False)
 
     _append_security_audit_log(
         db,

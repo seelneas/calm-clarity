@@ -14,7 +14,6 @@ class User(Base):
     token_version = Column(Integer, default=0)
     admin_mfa_enabled = Column(Integer, default=0)
     admin_mfa_secret = Column(String, nullable=True)
-    google_calendar_connected = Column(Integer, default=0)  # 0: Not Linked, 1: Connected
     apple_health_connected = Column(Integer, default=0)     # 0: Not Linked, 1: Connected
 
 
@@ -202,51 +201,3 @@ class NotificationLog(Base):
     created_at = Column(DateTime, nullable=False, index=True)
 
 
-class GoogleCalendarSyncState(Base):
-    __tablename__ = "google_calendar_sync_states"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, unique=True, index=True)
-    auto_sync_enabled = Column(Integer, nullable=False, default=1)
-    sync_interval_minutes = Column(Integer, nullable=False, default=5)
-    last_sync_at = Column(DateTime, nullable=True)
-    last_error = Column(Text, nullable=True)
-    pull_cursor_iso = Column(String, nullable=True)
-    updated_at = Column(DateTime, nullable=False, index=True)
-
-
-class GoogleCalendarEventMirror(Base):
-    __tablename__ = "google_calendar_event_mirrors"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    client_event_id = Column(String, nullable=True, index=True)
-    external_event_id = Column(String, nullable=True, index=True)
-    summary = Column(String, nullable=False, default="Untitled")
-    description = Column(Text, nullable=True)
-    status = Column(String, nullable=True, index=True)
-    html_link = Column(String, nullable=True)
-    start_iso = Column(String, nullable=True)
-    end_iso = Column(String, nullable=True)
-    timezone = Column(String, nullable=True)
-    etag = Column(String, nullable=True)
-    updated_remote_iso = Column(String, nullable=True)
-    source = Column(String, nullable=False, default="google")
-    deleted = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime, nullable=False, index=True)
-    updated_at = Column(DateTime, nullable=False, index=True)
-
-
-class GoogleCalendarPendingChange(Base):
-    __tablename__ = "google_calendar_pending_changes"
-
-    id = Column(String, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    action = Column(String, nullable=False, index=True)  # create | update | delete
-    client_event_id = Column(String, nullable=True, index=True)
-    external_event_id = Column(String, nullable=True, index=True)
-    payload_json = Column(Text, nullable=True)
-    status = Column(String, nullable=False, default="pending", index=True)  # pending | applied | failed
-    error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, index=True)
-    updated_at = Column(DateTime, nullable=False, index=True)

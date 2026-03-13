@@ -14,6 +14,7 @@ class DatabaseService {
   static final DatabaseService instance = DatabaseService._init();
   static Database? _database;
   static String? _nativeDbScope;
+  static bool debugForceWebStorage = false;
 
   static const String _webEntriesKey = 'web_journal_entries';
   static const String _webActionItemsKey = 'web_action_items';
@@ -26,10 +27,12 @@ class DatabaseService {
 
   DatabaseService._init();
 
-  bool get _isWeb => kIsWeb;
+  bool get _isWeb => kIsWeb || debugForceWebStorage;
 
   Future<String> _currentUserScope() async {
-    final email = (await PreferencesService.getUserEmail()).trim().toLowerCase();
+    final email = (await PreferencesService.getUserEmail())
+        .trim()
+        .toLowerCase();
     if (email.isEmpty) {
       return 'guest';
     }
@@ -97,8 +100,14 @@ class DatabaseService {
     if (!_isWeb) return;
     final scope = _webCacheScope ?? await _currentUserScope();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_scopedWebEntriesKey(scope), jsonEncode(_memoryEntries));
-    await prefs.setString(_scopedWebActionItemsKey(scope), jsonEncode(_memoryActionItems));
+    await prefs.setString(
+      _scopedWebEntriesKey(scope),
+      jsonEncode(_memoryEntries),
+    );
+    await prefs.setString(
+      _scopedWebActionItemsKey(scope),
+      jsonEncode(_memoryActionItems),
+    );
   }
 
   String _nativeDbFileForScope(String scope) {
@@ -179,9 +188,7 @@ class DatabaseService {
       );
     }
     if (oldVersion < 3) {
-      await db.execute(
-        'ALTER TABLE journal_entries ADD COLUMN aiSummary TEXT',
-      );
+      await db.execute('ALTER TABLE journal_entries ADD COLUMN aiSummary TEXT');
       await db.execute(
         'ALTER TABLE journal_entries ADD COLUMN aiActionItems TEXT',
       );
@@ -209,7 +216,11 @@ class DatabaseService {
       return;
     }
     final db = await instance.database;
-    await db.insert('journal_entries', entry.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+      'journal_entries',
+      entry.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   Future<List<JournalEntry>> getAllEntries() async {
@@ -270,7 +281,11 @@ class DatabaseService {
       return;
     }
     final db = await instance.database;
-    await db.insert('action_items', item.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    await db.insert(
+      'action_items',
+      item.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   Future<List<ActionItem>> getActionItemsForEntry(String entryId) async {
@@ -282,7 +297,11 @@ class DatabaseService {
           .toList();
     }
     final db = await instance.database;
-    final result = await db.query('action_items', where: 'entryId = ?', whereArgs: [entryId]);
+    final result = await db.query(
+      'action_items',
+      where: 'entryId = ?',
+      whereArgs: [entryId],
+    );
     return result.map((json) => ActionItem.fromMap(json)).toList();
   }
 
@@ -297,7 +316,12 @@ class DatabaseService {
       return;
     }
     final db = await instance.database;
-    await db.update('action_items', {'isCompleted': isCompleted ? 1 : 0}, where: 'id = ?', whereArgs: [id]);
+    await db.update(
+      'action_items',
+      {'isCompleted': isCompleted ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   Future<void> replaceActionItemsForEntry(
@@ -314,7 +338,11 @@ class DatabaseService {
 
     final db = await instance.database;
     await db.transaction((txn) async {
-      await txn.delete('action_items', where: 'entryId = ?', whereArgs: [entryId]);
+      await txn.delete(
+        'action_items',
+        where: 'entryId = ?',
+        whereArgs: [entryId],
+      );
       for (final item in items) {
         await txn.insert(
           'action_items',

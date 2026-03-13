@@ -932,6 +932,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (!confirm) return;
 
     await AuthService.logout();
+    if (!mounted) return;
     await Provider.of<JournalProvider>(context, listen: false).loadData();
     if (!mounted) return;
 

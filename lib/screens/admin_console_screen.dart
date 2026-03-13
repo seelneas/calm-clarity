@@ -178,22 +178,25 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                               return;
                             }
                             setLocalState(() => submitting = true);
-                            final response = await AIAdminService.performAdminReauth(
-                              password: password,
-                              mfaCode: codeController.text.trim(),
-                              recoveryCode: recoveryController.text.trim(),
-                            );
+                            final response =
+                                await AIAdminService.performAdminReauth(
+                                  password: password,
+                                  mfaCode: codeController.text.trim(),
+                                  recoveryCode: recoveryController.text.trim(),
+                                );
                             setLocalState(() => submitting = false);
-                            if (!mounted) return;
+                            if (!ctx.mounted) return;
                             if (response['success'] == true) {
                               success = true;
                               Navigator.pop(ctx);
                               return;
                             }
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            ScaffoldMessenger.of(ctx).showSnackBar(
                               SnackBar(
                                 content: Text(
-                                  (response['message'] ?? 'Admin re-auth failed').toString(),
+                                  (response['message'] ??
+                                          'Admin re-auth failed')
+                                      .toString(),
                                 ),
                                 behavior: SnackBarBehavior.floating,
                               ),
@@ -243,11 +246,13 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
           infoMessage = null;
           return;
         }
-        infoMessage = (retry['message'] ?? 'Unable to load MFA setup').toString();
+        infoMessage = (retry['message'] ?? 'Unable to load MFA setup')
+            .toString();
         return;
       }
 
-      infoMessage = (response['message'] ?? 'Unable to load MFA setup').toString();
+      infoMessage = (response['message'] ?? 'Unable to load MFA setup')
+          .toString();
     }
 
     await loadSetup();
@@ -261,7 +266,8 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
           builder: (context, setLocalState) {
             final enabled = setup?['mfa_enabled'] == true;
             final secret = (setup?['secret'] ?? '').toString();
-            final remainingCodes = (recoveryStatus?['remaining_codes'] ?? 0).toString();
+            final remainingCodes = (recoveryStatus?['remaining_codes'] ?? 0)
+                .toString();
             return AlertDialog(
               title: const Text('Admin MFA Security'),
               content: Column(
@@ -302,7 +308,9 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                           final reauthed = await requireStepUp();
                           if (!reauthed || !mounted) return;
                           final code = await _promptForAdminMfaCode(
-                            title: enabled ? 'Disable Admin MFA' : 'Enable Admin MFA',
+                            title: enabled
+                                ? 'Disable Admin MFA'
+                                : 'Enable Admin MFA',
                             message: enabled
                                 ? 'Enter your current MFA code to disable MFA.'
                                 : 'Enter a fresh MFA code from your authenticator to enable MFA.',
@@ -317,10 +325,12 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                           if (action['requires_reauth'] == true) {
                             AIAdminService.clearAdminStepUpToken();
                           }
-                          if (action['requires_mfa'] == true && action['success'] != true) {
+                          if (action['requires_mfa'] == true &&
+                              action['success'] != true) {
                             final newCode = await _promptForAdminMfaCode(
                               title: 'MFA Challenge',
-                              message: 'Enter your admin MFA code and try again.',
+                              message:
+                                  'Enter your admin MFA code and try again.',
                             );
                             if (newCode != null) {
                               AIAdminService.setAdminTotpCode(newCode);
@@ -328,20 +338,22 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                           }
                           await loadSetup();
                           setLocalState(() => busy = false);
-                          if (!mounted) return;
+                          if (!ctx.mounted) return;
                           final successPayload = action['data'];
                           final actionMessage = action['success'] == true
-                              ? ((successPayload is Map && successPayload['message'] != null)
+                              ? ((successPayload is Map &&
+                                        successPayload['message'] != null)
                                     ? successPayload['message'].toString()
                                     : '')
                               : (action['message'] ?? '').toString();
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          ScaffoldMessenger.of(ctx).showSnackBar(
                             SnackBar(
                               content: Text(
                                 actionMessage.isNotEmpty
                                     ? actionMessage
-                                    :
-                                    (enabled ? 'MFA disabled' : 'MFA enabled'),
+                                    : (enabled
+                                          ? 'MFA disabled'
+                                          : 'MFA enabled'),
                               ),
                               behavior: SnackBarBehavior.floating,
                             ),
@@ -356,13 +368,17 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                           final reauthed = await requireStepUp();
                           if (!reauthed || !mounted) return;
                           setLocalState(() => busy = true);
-                          final regen = await AIAdminService.regenerateRecoveryCodes();
+                          final regen =
+                              await AIAdminService.regenerateRecoveryCodes();
                           await loadSetup();
                           setLocalState(() => busy = false);
-                          if (!mounted) return;
+                          if (!ctx.mounted) return;
                           if (regen['success'] == true) {
-                            final data = Map<String, dynamic>.from(regen['data'] as Map);
-                            final codes = (data['codes'] as List?)
+                            final data = Map<String, dynamic>.from(
+                              regen['data'] as Map,
+                            );
+                            final codes =
+                                (data['codes'] as List?)
                                     ?.map((item) => item.toString())
                                     .toList() ??
                                 <String>[];
@@ -371,8 +387,9 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                                 ClipboardData(text: codes.join('\n')),
                               );
                             }
+                            if (!ctx.mounted) return;
                             await showDialog<void>(
-                              context: context,
+                              context: ctx,
                               builder: (innerCtx) {
                                 return AlertDialog(
                                   title: const Text('New Recovery Codes'),
@@ -391,18 +408,23 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                                 );
                               },
                             );
-                            ScaffoldMessenger.of(context).showSnackBar(
+                            if (!ctx.mounted) return;
+                            ScaffoldMessenger.of(ctx).showSnackBar(
                               const SnackBar(
-                                content: Text('Recovery codes copied to clipboard.'),
+                                content: Text(
+                                  'Recovery codes copied to clipboard.',
+                                ),
                                 behavior: SnackBarBehavior.floating,
                               ),
                             );
                             return;
                           }
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          ScaffoldMessenger.of(ctx).showSnackBar(
                             SnackBar(
                               content: Text(
-                                (regen['message'] ?? 'Failed to regenerate recovery codes').toString(),
+                                (regen['message'] ??
+                                        'Failed to regenerate recovery codes')
+                                    .toString(),
                               ),
                               behavior: SnackBarBehavior.floating,
                             ),
@@ -460,7 +482,10 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                       color: Colors.orange.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Text(_error!, style: const TextStyle(color: Colors.orangeAccent)),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.orangeAccent),
+                    ),
                   ),
                 _summaryPanel(context, colors),
                 const SizedBox(height: 16),
@@ -482,11 +507,14 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
                   context,
                   icon: Icons.admin_panel_settings_outlined,
                   title: 'AI Ops Dashboard',
-                  subtitle: 'Queue depth, retries, failures, moderation and quota',
+                  subtitle:
+                      'Queue depth, retries, failures, moderation and quota',
                   onTap: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (_) => const AIOpsDashboardScreen()),
+                      MaterialPageRoute(
+                        builder: (_) => const AIOpsDashboardScreen(),
+                      ),
                     );
                   },
                 ),
@@ -525,8 +553,14 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
           _metric('Active 7d', _readInt('users_active_last_7_days').toString()),
           _metric('AI Today', _readInt('ai_requests_today').toString()),
           _metric('AI Last 7d', _readInt('ai_requests_last_7_days').toString()),
-          _metric('Google Linked', _readInt('users_with_google_calendar').toString()),
-          _metric('Apple Linked', _readInt('users_with_apple_health').toString()),
+          _metric(
+            'Google Linked',
+            _readInt('users_with_google_calendar').toString(),
+          ),
+          _metric(
+            'Apple Linked',
+            _readInt('users_with_apple_health').toString(),
+          ),
         ],
       ),
     );
@@ -581,10 +615,7 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen> {
             fontWeight: FontWeight.w600,
           ),
         ),
-        subtitle: Text(
-          subtitle,
-          style: TextStyle(color: colors.textMuted),
-        ),
+        subtitle: Text(subtitle, style: TextStyle(color: colors.textMuted)),
         trailing: Icon(Icons.chevron_right, color: colors.iconDefault),
       ),
     );

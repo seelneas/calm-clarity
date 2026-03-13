@@ -9,7 +9,6 @@ class UserBase(BaseModel):
     email: EmailStr
     name: Optional[str] = None
     role: str = "user"
-    google_calendar_connected: int = 0
     apple_health_connected: int = 0
 
 class UserCreate(UserBase):
@@ -167,7 +166,6 @@ class AdminAccessResponse(BaseModel):
 class AdminUserSummaryResponse(BaseModel):
     generated_at: str
     total_users: int
-    users_with_google_calendar: int
     users_with_apple_health: int
     users_active_last_7_days: int
     ai_requests_last_7_days: int
@@ -179,7 +177,6 @@ class AdminUserListItem(BaseModel):
     name: Optional[str] = None
     email: EmailStr
     is_active: bool
-    google_calendar_connected: bool
     apple_health_connected: bool
     ai_requests_last_7_days: int
     ai_requests_today: int
@@ -460,72 +457,6 @@ class ObservabilityAlertsResponse(BaseModel):
     generated_at: str
     overall_status: str
     alerts: List[ObservabilityAlertItem]
-
-
-class GoogleCalendarAccessTokenRequest(StrictRequestModel):
-    access_token: str = Field(min_length=8, max_length=4096)
-
-
-class GoogleCalendarEventCreateRequest(StrictRequestModel):
-    access_token: str = Field(min_length=8, max_length=4096)
-    summary: str = Field(min_length=1, max_length=240)
-    start_iso: str = Field(min_length=8, max_length=80)
-    end_iso: str = Field(min_length=8, max_length=80)
-    description: Optional[str] = Field(default=None, max_length=5000)
-    timezone: Optional[str] = Field(default="UTC", max_length=80)
-
-
-class GoogleCalendarEventOut(BaseModel):
-    id: str
-    summary: str
-    status: Optional[str] = None
-    html_link: Optional[str] = None
-    start_iso: Optional[str] = None
-    end_iso: Optional[str] = None
-
-
-class GoogleCalendarLocalChange(StrictRequestModel):
-    action: str = Field(min_length=3, max_length=20)
-    client_event_id: Optional[str] = Field(default=None, max_length=128)
-    external_event_id: Optional[str] = Field(default=None, max_length=128)
-    summary: Optional[str] = Field(default=None, max_length=240)
-    description: Optional[str] = Field(default=None, max_length=5000)
-    start_iso: Optional[str] = Field(default=None, max_length=80)
-    end_iso: Optional[str] = Field(default=None, max_length=80)
-    timezone: Optional[str] = Field(default="UTC", max_length=80)
-
-
-class GoogleCalendarSyncRunRequest(StrictRequestModel):
-    access_token: str = Field(min_length=8, max_length=4096)
-    local_changes: List[GoogleCalendarLocalChange] = Field(default_factory=list, max_length=500)
-
-
-class GoogleCalendarSyncSettingsRequest(StrictRequestModel):
-    auto_sync_enabled: bool = True
-    sync_interval_minutes: int = Field(default=5, ge=1, le=1440)
-
-
-class GoogleCalendarSyncStatusResponse(BaseModel):
-    connected: bool
-    auto_sync_enabled: bool
-    sync_interval_minutes: int
-    last_sync_at: Optional[str] = None
-    last_error: Optional[str] = None
-    pending_count: int
-
-
-class GoogleCalendarSyncRunResponse(BaseModel):
-    synced_at: str
-    pulled_count: int
-    pushed_count: int
-    failed_count: int
-    pending_count: int
-    events: List[GoogleCalendarEventOut]
-
-
-class GoogleCalendarEventsResponse(BaseModel):
-    connected: bool
-    events: List[GoogleCalendarEventOut]
 
 
 class NotificationDeviceRegisterRequest(StrictRequestModel):

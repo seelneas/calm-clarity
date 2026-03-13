@@ -75,29 +75,33 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
                           if (password.isEmpty) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               const SnackBar(
-                                content: Text('Password is required for re-auth.'),
+                                content: Text(
+                                  'Password is required for re-auth.',
+                                ),
                                 behavior: SnackBarBehavior.floating,
                               ),
                             );
                             return;
                           }
                           setLocalState(() => submitting = true);
-                          final result = await AIAdminService.performAdminReauth(
-                            password: password,
-                            mfaCode: mfaController.text.trim(),
-                            recoveryCode: recoveryController.text.trim(),
-                          );
+                          final result =
+                              await AIAdminService.performAdminReauth(
+                                password: password,
+                                mfaCode: mfaController.text.trim(),
+                                recoveryCode: recoveryController.text.trim(),
+                              );
                           setLocalState(() => submitting = false);
-                          if (!mounted) return;
+                          if (!ctx.mounted) return;
                           if (result['success'] == true) {
                             success = true;
                             Navigator.pop(ctx);
                             return;
                           }
-                          ScaffoldMessenger.of(context).showSnackBar(
+                          ScaffoldMessenger.of(ctx).showSnackBar(
                             SnackBar(
                               content: Text(
-                                (result['message'] ?? 'Admin re-auth failed').toString(),
+                                (result['message'] ?? 'Admin re-auth failed')
+                                    .toString(),
                               ),
                               behavior: SnackBarBehavior.floating,
                             ),
@@ -140,9 +144,9 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
       final data = Map<String, dynamic>.from(result['data'] as Map);
       final users = data['users'] is List
           ? List<Map<String, dynamic>>.from(
-              (data['users'] as List)
-                  .whereType<Map>()
-                  .map((item) => Map<String, dynamic>.from(item)),
+              (data['users'] as List).whereType<Map>().map(
+                (item) => Map<String, dynamic>.from(item),
+              ),
             )
           : <Map<String, dynamic>>[];
 
@@ -164,7 +168,8 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
     final email = (user['email'] ?? 'unknown').toString();
     if (userId == null) return;
 
-    final confirm = await showDialog<bool>(
+    final confirm =
+        await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('Delete User'),
@@ -217,7 +222,10 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
     );
   }
 
-  Future<void> _toggleActive(Map<String, dynamic> user, bool shouldActivate) async {
+  Future<void> _toggleActive(
+    Map<String, dynamic> user,
+    bool shouldActivate,
+  ) async {
     final userId = (user['id'] as num?)?.toInt();
     if (userId == null) return;
 
@@ -293,7 +301,8 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
               }
               setLocalState(() {
                 loading = false;
-                error = (result['message'] ?? 'Failed to load sessions').toString();
+                error = (result['message'] ?? 'Failed to load sessions')
+                    .toString();
               });
             }
 
@@ -302,12 +311,18 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
               if (!reauthed || !mounted) return;
 
               setLocalState(() => busy = true);
-              final result = await AIAdminService.revokeUserSession(userId, sessionId);
+              final result = await AIAdminService.revokeUserSession(
+                userId,
+                sessionId,
+              );
               setLocalState(() => busy = false);
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
+              if (!ctx.mounted) return;
+              ScaffoldMessenger.of(ctx).showSnackBar(
                 SnackBar(
-                  content: Text((result['message'] ?? 'Failed to revoke session').toString()),
+                  content: Text(
+                    (result['message'] ?? 'Failed to revoke session')
+                        .toString(),
+                  ),
                   behavior: SnackBarBehavior.floating,
                 ),
               );
@@ -323,10 +338,13 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
               setLocalState(() => busy = true);
               final result = await AIAdminService.revokeAllUserSessions(userId);
               setLocalState(() => busy = false);
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
+              if (!ctx.mounted) return;
+              ScaffoldMessenger.of(ctx).showSnackBar(
                 SnackBar(
-                  content: Text((result['message'] ?? 'Failed to revoke sessions').toString()),
+                  content: Text(
+                    (result['message'] ?? 'Failed to revoke sessions')
+                        .toString(),
+                  ),
                   behavior: SnackBarBehavior.floating,
                 ),
               );
@@ -346,52 +364,67 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
                 child: loading
                     ? const Center(child: CircularProgressIndicator())
                     : error != null
-                        ? Text(error!)
-                        : SingleChildScrollView(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Refresh Sessions',
-                                  style: TextStyle(fontWeight: FontWeight.w700),
-                                ),
-                                const SizedBox(height: 8),
-                                ...sessions.map((session) {
-                                  final sessionId = (session['session_id'] as num?)?.toInt() ?? 0;
-                                  final label = (session['device_label'] ?? session['user_agent'] ?? 'Unknown device').toString();
-                                  final revoked = session['revoked_at'] != null;
-                                  return ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text(label),
-                                    subtitle: Text((session['client_ip'] ?? 'Unknown IP').toString()),
-                                    trailing: revoked
-                                        ? const Text('Revoked', style: TextStyle(fontSize: 12))
-                                        : TextButton(
-                                            onPressed: busy ? null : () => revokeOne(sessionId),
-                                            child: const Text('Revoke'),
-                                          ),
-                                  );
-                                }),
-                                const Divider(),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'Registered Devices',
-                                  style: TextStyle(fontWeight: FontWeight.w700),
-                                ),
-                                const SizedBox(height: 8),
-                                ...devices.map((device) {
-                                  final platform = (device['platform'] ?? 'unknown').toString();
-                                  final deviceId = (device['device_id'] ?? '').toString();
-                                  return ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text(platform.toUpperCase()),
-                                    subtitle: Text(deviceId),
-                                  );
-                                }),
-                              ],
+                    ? Text(error!)
+                    : SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Refresh Sessions',
+                              style: TextStyle(fontWeight: FontWeight.w700),
                             ),
-                          ),
+                            const SizedBox(height: 8),
+                            ...sessions.map((session) {
+                              final sessionId =
+                                  (session['session_id'] as num?)?.toInt() ?? 0;
+                              final label =
+                                  (session['device_label'] ??
+                                          session['user_agent'] ??
+                                          'Unknown device')
+                                      .toString();
+                              final revoked = session['revoked_at'] != null;
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(label),
+                                subtitle: Text(
+                                  (session['client_ip'] ?? 'Unknown IP')
+                                      .toString(),
+                                ),
+                                trailing: revoked
+                                    ? const Text(
+                                        'Revoked',
+                                        style: TextStyle(fontSize: 12),
+                                      )
+                                    : TextButton(
+                                        onPressed: busy
+                                            ? null
+                                            : () => revokeOne(sessionId),
+                                        child: const Text('Revoke'),
+                                      ),
+                              );
+                            }),
+                            const Divider(),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Registered Devices',
+                              style: TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 8),
+                            ...devices.map((device) {
+                              final platform = (device['platform'] ?? 'unknown')
+                                  .toString();
+                              final deviceId = (device['device_id'] ?? '')
+                                  .toString();
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(platform.toUpperCase()),
+                                subtitle: Text(deviceId),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
               ),
               actions: [
                 TextButton(
@@ -436,7 +469,9 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
         centerTitle: true,
         actions: [
           IconButton(
-            onPressed: _isLoading ? null : () => _loadUsers(query: _searchController.text.trim()),
+            onPressed: _isLoading
+                ? null
+                : () => _loadUsers(query: _searchController.text.trim()),
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -452,7 +487,8 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
                 hintText: 'Search by email or name',
                 prefixIcon: const Icon(Icons.search),
                 suffixIcon: IconButton(
-                  onPressed: () => _loadUsers(query: _searchController.text.trim()),
+                  onPressed: () =>
+                      _loadUsers(query: _searchController.text.trim()),
                   icon: const Icon(Icons.arrow_forward),
                 ),
                 filled: true,
@@ -464,125 +500,146 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
               ),
             ),
           ),
-          if (_isDeleting)
-            const LinearProgressIndicator(minHeight: 2),
+          if (_isDeleting) const LinearProgressIndicator(minHeight: 2),
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(_error!, textAlign: TextAlign.center),
-                        ),
-                      )
-                    : _users.isEmpty
-                        ? const Center(child: Text('No users found'))
-                        : ListView.builder(
-                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                            itemCount: _users.length,
-                            itemBuilder: (context, index) {
-                              final user = _users[index];
-                              final email = (user['email'] ?? '').toString();
-                              final name = (user['name'] ?? '').toString();
-                              final isActive = _asBool(user, 'is_active');
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(_error!, textAlign: TextAlign.center),
+                    ),
+                  )
+                : _users.isEmpty
+                ? const Center(child: Text('No users found'))
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    itemCount: _users.length,
+                    itemBuilder: (context, index) {
+                      final user = _users[index];
+                      final email = (user['email'] ?? '').toString();
+                      final name = (user['name'] ?? '').toString();
+                      final isActive = _asBool(user, 'is_active');
 
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 12),
-                                decoration: BoxDecoration(
-                                  color: colors.cardBackground,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: colors.subtleBorder),
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: colors.cardBackground,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: colors.subtleBorder),
+                        ),
+                        child: ExpansionTile(
+                          title: Text(
+                            name.isEmpty ? email : name,
+                            style: TextStyle(
+                              color: theme.colorScheme.onSurface,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          subtitle: Text(email),
+                          childrenPadding: const EdgeInsets.fromLTRB(
+                            16,
+                            0,
+                            16,
+                            12,
+                          ),
+                          children: [
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                _pill(
+                                  'AI 7d: ${_asInt(user, 'ai_requests_last_7_days')}',
                                 ),
-                                child: ExpansionTile(
-                                  title: Text(
-                                    name.isEmpty ? email : name,
-                                    style: TextStyle(
-                                      color: theme.colorScheme.onSurface,
-                                      fontWeight: FontWeight.w600,
+                                _pill(
+                                  'AI today: ${_asInt(user, 'ai_requests_today')}',
+                                ),
+                                _pill(
+                                  'Push devices: ${_asInt(user, 'push_devices_active')}',
+                                ),
+                                _pill(
+                                  isActive
+                                      ? 'Status: Active'
+                                      : 'Status: Suspended',
+                                ),
+                                _pill(
+                                  _asBool(user, 'google_calendar_connected')
+                                      ? 'Google Calendar: Connected'
+                                      : 'Google Calendar: Off',
+                                ),
+                                _pill(
+                                  _asBool(user, 'apple_health_connected')
+                                      ? 'Apple Health: Connected'
+                                      : 'Apple Health: Off',
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Wrap(
+                                spacing: 8,
+                                children: [
+                                  TextButton.icon(
+                                    onPressed: _isDeleting
+                                        ? null
+                                        : () => _toggleActive(user, !isActive),
+                                    icon: Icon(
+                                      isActive
+                                          ? Icons.pause_circle_outline
+                                          : Icons.play_circle_outline,
+                                      color: Colors.orangeAccent,
+                                    ),
+                                    label: Text(
+                                      isActive ? 'Suspend' : 'Reactivate',
+                                      style: const TextStyle(
+                                        color: Colors.orangeAccent,
+                                      ),
                                     ),
                                   ),
-                                  subtitle: Text(email),
-                                  childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                                  children: [
-                                    Wrap(
-                                      spacing: 8,
-                                      runSpacing: 8,
-                                      children: [
-                                        _pill('AI 7d: ${_asInt(user, 'ai_requests_last_7_days')}'),
-                                        _pill('AI today: ${_asInt(user, 'ai_requests_today')}'),
-                                        _pill('Push devices: ${_asInt(user, 'push_devices_active')}'),
-                                        _pill(isActive ? 'Status: Active' : 'Status: Suspended'),
-                                        _pill(
-                                          _asBool(user, 'google_calendar_connected')
-                                              ? 'Google Calendar: Connected'
-                                              : 'Google Calendar: Off',
-                                        ),
-                                        _pill(
-                                          _asBool(user, 'apple_health_connected')
-                                              ? 'Apple Health: Connected'
-                                              : 'Apple Health: Off',
-                                        ),
-                                      ],
+                                  TextButton.icon(
+                                    onPressed: _isDeleting
+                                        ? null
+                                        : () => _showUserSessionsDialog(user),
+                                    icon: const Icon(Icons.devices_outlined),
+                                    label: const Text('Sessions'),
+                                  ),
+                                  TextButton.icon(
+                                    onPressed: _isDeleting
+                                        ? null
+                                        : () => _confirmDelete(user),
+                                    icon: const Icon(
+                                      Icons.delete_outline,
+                                      color: Colors.redAccent,
                                     ),
-                                    const SizedBox(height: 10),
-                                    Align(
-                                      alignment: Alignment.centerRight,
-                                      child: Wrap(
-                                        spacing: 8,
-                                        children: [
-                                          TextButton.icon(
-                                            onPressed: _isDeleting
-                                                ? null
-                                                : () => _toggleActive(user, !isActive),
-                                            icon: Icon(
-                                              isActive
-                                                  ? Icons.pause_circle_outline
-                                                  : Icons.play_circle_outline,
-                                              color: Colors.orangeAccent,
-                                            ),
-                                            label: Text(
-                                              isActive ? 'Suspend' : 'Reactivate',
-                                              style: const TextStyle(
-                                                color: Colors.orangeAccent,
-                                              ),
-                                            ),
-                                          ),
-                                          TextButton.icon(
-                                            onPressed: _isDeleting ? null : () => _showUserSessionsDialog(user),
-                                            icon: const Icon(Icons.devices_outlined),
-                                            label: const Text('Sessions'),
-                                          ),
-                                          TextButton.icon(
-                                            onPressed: _isDeleting ? null : () => _confirmDelete(user),
-                                            icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                                            label: const Text(
-                                              'Delete User',
-                                              style: TextStyle(color: Colors.redAccent),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+                                    label: const Text(
+                                      'Delete User',
+                                      style: TextStyle(color: Colors.redAccent),
                                     ),
-                                    if (!isActive)
-                                      const Padding(
-                                        padding: EdgeInsets.only(top: 6),
-                                        child: Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: Text(
-                                            'Suspended users cannot sign in until reactivated.',
-                                            style: TextStyle(
-                                              color: Colors.orangeAccent,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                  ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (!isActive)
+                              const Padding(
+                                padding: EdgeInsets.only(top: 6),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    'Suspended users cannot sign in until reactivated.',
+                                    style: TextStyle(
+                                      color: Colors.orangeAccent,
+                                      fontSize: 12,
+                                    ),
+                                  ),
                                 ),
-                              );
-                            },
-                          ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
           ),
         ],
       ),

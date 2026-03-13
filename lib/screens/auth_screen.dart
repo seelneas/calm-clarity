@@ -143,7 +143,10 @@ class _AuthScreenState extends State<AuthScreen>
       }
     } else {
       if (mounted) {
-        await _handleAuthFailure(result, email: _loginEmailController.text.trim());
+        await _handleAuthFailure(
+          result,
+          email: _loginEmailController.text.trim(),
+        );
       }
     }
   }
@@ -155,29 +158,31 @@ class _AuthScreenState extends State<AuthScreen>
     final message = (result['message'] ?? 'Authentication failed').toString();
     final errorType = (result['error_type'] ?? '').toString().toLowerCase();
     final loweredMessage = message.toLowerCase();
-    final isVerification = errorType == 'email_verification_required' ||
+    final isVerification =
+        errorType == 'email_verification_required' ||
         loweredMessage.contains('email verification is required');
-    final isSuspended = errorType == 'account_suspended' ||
+    final isSuspended =
+        errorType == 'account_suspended' ||
         loweredMessage.contains('account is suspended');
-    final isLocked = errorType == 'account_locked' ||
+    final isLocked =
+        errorType == 'account_locked' ||
         loweredMessage.contains('too many failed attempts') ||
         loweredMessage.contains('captcha required') ||
         loweredMessage.contains('rate limit exceeded');
 
     if (isVerification) {
       setState(() {
-        _securityNotice = 'Email verification is required before you can sign in.';
+        _securityNotice =
+            'Email verification is required before you can sign in.';
       });
-      await _showVerificationRequiredDialog(
-        email: email,
-        message: message,
-      );
+      await _showVerificationRequiredDialog(email: email, message: message);
       return;
     }
 
     if (isSuspended) {
       setState(() {
-        _securityNotice = 'Your account is suspended. Contact support for help.';
+        _securityNotice =
+            'Your account is suspended. Contact support for help.';
       });
       await _showSuspendedDialog(message);
       return;
@@ -262,21 +267,26 @@ class _AuthScreenState extends State<AuthScreen>
                       ? null
                       : () async {
                           setLocalState(() => sending = true);
-                          final resend = await AuthService.resendEmailVerification(email);
+                          final resend =
+                              await AuthService.resendEmailVerification(email);
                           if (!mounted) return;
                           setLocalState(() => sending = false);
 
-                          final verificationLink = (resend['verification_link'] ?? '').toString();
+                          final verificationLink =
+                              (resend['verification_link'] ?? '').toString();
                           if (verificationLink.isNotEmpty) {
                             await Clipboard.setData(
                               ClipboardData(text: verificationLink),
                             );
                             if (!mounted) return;
-                            _showFeedback('Verification link copied to clipboard.');
+                            _showFeedback(
+                              'Verification link copied to clipboard.',
+                            );
                           }
 
                           _showFeedback(
-                            (resend['message'] ?? 'Verification email resent').toString(),
+                            (resend['message'] ?? 'Verification email resent')
+                                .toString(),
                             isError: !(resend['success'] == true),
                           );
                         },
@@ -303,7 +313,9 @@ class _AuthScreenState extends State<AuthScreen>
 
   Future<void> _showVerifyEmailTokenDialog({String? prefilledEmail}) async {
     final tokenController = TextEditingController();
-    final emailController = TextEditingController(text: prefilledEmail ?? _loginEmailController.text.trim());
+    final emailController = TextEditingController(
+      text: prefilledEmail ?? _loginEmailController.text.trim(),
+    );
     bool submitting = false;
 
     await showDialog<void>(
@@ -338,24 +350,32 @@ class _AuthScreenState extends State<AuthScreen>
                       : () async {
                           final email = emailController.text.trim();
                           if (email.isEmpty) {
-                            _showFeedback('Enter an email to resend verification.', isError: true);
+                            _showFeedback(
+                              'Enter an email to resend verification.',
+                              isError: true,
+                            );
                             return;
                           }
                           setLocalState(() => submitting = true);
-                          final resend = await AuthService.resendEmailVerification(email);
+                          final resend =
+                              await AuthService.resendEmailVerification(email);
                           setLocalState(() => submitting = false);
 
-                          final verificationLink = (resend['verification_link'] ?? '').toString();
+                          final verificationLink =
+                              (resend['verification_link'] ?? '').toString();
                           if (verificationLink.isNotEmpty) {
                             await Clipboard.setData(
                               ClipboardData(text: verificationLink),
                             );
                             if (!mounted) return;
-                            _showFeedback('Verification link copied to clipboard.');
+                            _showFeedback(
+                              'Verification link copied to clipboard.',
+                            );
                           }
 
                           _showFeedback(
-                            (resend['message'] ?? 'Verification email resent').toString(),
+                            (resend['message'] ?? 'Verification email resent')
+                                .toString(),
                             isError: !(resend['success'] == true),
                           );
                         },
@@ -367,21 +387,35 @@ class _AuthScreenState extends State<AuthScreen>
                       : () async {
                           final token = tokenController.text.trim();
                           if (token.isEmpty) {
-                            _showFeedback('Enter a verification token.', isError: true);
+                            _showFeedback(
+                              'Enter a verification token.',
+                              isError: true,
+                            );
                             return;
                           }
                           setLocalState(() => submitting = true);
-                          final verify = await AuthService.verifyEmailToken(token);
+                          final verify = await AuthService.verifyEmailToken(
+                            token,
+                          );
                           setLocalState(() => submitting = false);
                           if (!mounted) return;
                           if (verify['success'] == true) {
+                            if (!ctx.mounted) return;
                             setState(() {
                               _securityNotice = null;
                             });
                             Navigator.pop(ctx);
-                            _showFeedback((verify['message'] ?? 'Email verified successfully').toString());
+                            _showFeedback(
+                              (verify['message'] ??
+                                      'Email verified successfully')
+                                  .toString(),
+                            );
                           } else {
-                            _showFeedback((verify['message'] ?? 'Verification failed').toString(), isError: true);
+                            _showFeedback(
+                              (verify['message'] ?? 'Verification failed')
+                                  .toString(),
+                              isError: true,
+                            );
                           }
                         },
                   child: const Text('Verify'),
@@ -459,11 +493,16 @@ class _AuthScreenState extends State<AuthScreen>
                 decoration: BoxDecoration(
                   color: Colors.orange.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.orange.withValues(alpha: 0.35)),
+                  border: Border.all(
+                    color: Colors.orange.withValues(alpha: 0.35),
+                  ),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.security_outlined, color: Colors.orangeAccent),
+                    const Icon(
+                      Icons.security_outlined,
+                      color: Colors.orangeAccent,
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -476,7 +515,11 @@ class _AuthScreenState extends State<AuthScreen>
                     ),
                     IconButton(
                       onPressed: () => setState(() => _securityNotice = null),
-                      icon: const Icon(Icons.close, size: 18, color: Colors.orangeAccent),
+                      icon: const Icon(
+                        Icons.close,
+                        size: 18,
+                        color: Colors.orangeAccent,
+                      ),
                     ),
                   ],
                 ),
@@ -822,8 +865,10 @@ class _AuthScreenState extends State<AuthScreen>
 
                         setState(() => isSubmitting = true);
                         final result = await AuthService.forgotPassword(email);
-                        final resetToken = (result['reset_token'] ?? '').toString();
-                        final resetLink = (result['reset_link'] ?? '').toString();
+                        final resetToken = (result['reset_token'] ?? '')
+                            .toString();
+                        final resetLink = (result['reset_link'] ?? '')
+                            .toString();
                         final delivery = (result['delivery'] ?? '').toString();
 
                         if (ctx.mounted) {
@@ -839,9 +884,7 @@ class _AuthScreenState extends State<AuthScreen>
                               ClipboardData(text: resetLink),
                             );
                             if (!mounted || !ctx.mounted) return;
-                            _showFeedback(
-                              'Reset link copied to clipboard.',
-                            );
+                            _showFeedback('Reset link copied to clipboard.');
                           }
 
                           if (result['success'] && delivery == 'dev_link') {

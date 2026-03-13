@@ -27,6 +27,7 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+export GOOGLE_CLIENT_ID=<your-google-oauth-web-client-id>
 uvicorn main:app --reload
 ```
 
@@ -38,14 +39,28 @@ From repo root:
 
 ```bash
 flutter pub get
-flutter run --dart-define=API_BASE_URL=http://127.0.0.1:8000
+flutter run \
+	--dart-define=API_BASE_URL=http://127.0.0.1:8000 \
+	--dart-define=GOOGLE_WEB_CLIENT_ID=<your-google-oauth-web-client-id>
 ```
 
 Android emulator base URL:
 
 ```bash
-flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8000
+flutter run \
+	--dart-define=API_BASE_URL=http://10.0.2.2:8000 \
+	--dart-define=GOOGLE_WEB_CLIENT_ID=<your-google-oauth-web-client-id>
 ```
+
+Web (Chrome) example:
+
+```bash
+flutter run -d chrome \
+	--dart-define=API_BASE_URL=http://127.0.0.1:8000 \
+	--dart-define=GOOGLE_WEB_CLIENT_ID=<your-google-oauth-web-client-id>
+```
+
+Note: if you change any `--dart-define`, do a full restart (stop and run again), not only hot reload.
 
 ## Environment Variables (Minimal)
 
@@ -139,6 +154,13 @@ Runs on push to `main` and pull requests.
 - **Android emulator cannot reach backend:** use `http://10.0.2.2:8000`.
 - **Integration test font/network issues:** keep tests independent from runtime font fetching.
 - **No AI responses:** verify provider keys or use fallback mode.
+- **Google popup closes (`popup_closed`) on web:**
+	- In Google Cloud Console, ensure your **Web OAuth client** includes the exact deployed frontend origin in **Authorized JavaScript origins** (for example `https://app.yourdomain.com`).
+	- Add backend callback origin(s) as needed in **Authorized redirect URIs**.
+	- Use the same Web client ID in both places:
+		- backend env: `GOOGLE_CLIENT_ID`
+		- Flutter build define: `--dart-define=GOOGLE_WEB_CLIENT_ID=<same-id>`
+	- Rebuild/redeploy frontend after changing `--dart-define` values.
 
 ---
 
