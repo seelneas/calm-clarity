@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +8,7 @@ import '../theme.dart';
 import '../providers/journal_provider.dart';
 import '../models/journal_entry.dart';
 import '../models/action_item.dart';
+import '../services/media_service.dart';
 
 class EntryDetailScreen extends StatefulWidget {
   final String entryId;
@@ -567,7 +569,7 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
   Future<void> _togglePlayback(JournalEntry entry) async {
     final audioPath = entry.audioPath;
     if (audioPath == null || audioPath.trim().isEmpty) return;
-    final normalizedPath = audioPath.trim();
+    String finalPath = audioPath.trim();
 
     try {
       if (_playerState == PlayerState.playing) {
@@ -580,15 +582,26 @@ class _EntryDetailScreenState extends State<EntryDetailScreen> {
         return;
       }
 
-      if (normalizedPath.startsWith('blob:') ||
-          normalizedPath.startsWith('http://') ||
-          normalizedPath.startsWith('https://')) {
-        await _audioPlayer.play(UrlSource(normalizedPath));
+      if (finalPath.startsWith('http://') || finalPath.startsWith('https://')) {
+        debugPrint('[AudioPlayer] Refreshing remote URL...');
+        final refreshed = await MediaService.refreshMediaUrl(finalPath);
+        if (refreshed != null && refreshed.isNotEmpty) {
+          finalPath = refreshed;
+        }
+      }
+
+      if (finalPath.startsWith('blob:') ||
+          finalPath.startsWith('http://') ||
+          finalPath.startsWith('https://')) {
+        debugPrint('[AudioPlayer] Playing URL source: ${finalPath.length > 100 ? "${finalPath.substring(0, 100)}..." : finalPath}');
+        await _audioPlayer.play(UrlSource(finalPath));
         return;
       }
 
-      await _audioPlayer.play(DeviceFileSource(normalizedPath));
-    } catch (_) {
+      debugPrint('[AudioPlayer] Playing device file: $finalPath');
+      await _audioPlayer.play(DeviceFileSource(finalPath));
+    } catch (e) {
+      debugPrint('[AudioPlayer] Playback error: $e');
       _showMessage('Unable to play this audio recording.');
     }
   }

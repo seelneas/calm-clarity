@@ -541,18 +541,26 @@ class _VoiceRecordingScreenState extends State<VoiceRecordingScreen>
             filename: 'voice_$entryId.webm',
             contentType: 'audio/webm',
           );
+          debugPrint('[VoiceUpload] Web upload result: $uploadResult');
           if (uploadResult['success'] == true &&
               (uploadResult['public_url'] ?? '').toString().trim().isNotEmpty) {
             resolvedAudioPath = (uploadResult['public_url'] as String).trim();
+            debugPrint('[VoiceUpload] Using uploaded URL: $resolvedAudioPath');
+          } else {
+            debugPrint('[VoiceUpload] Web upload failed, keeping local path');
           }
         }
       } else {
         final uploadResult = await MediaService.uploadVoiceRecordingFromPath(
           resolvedAudioPath,
         );
+        debugPrint('[VoiceUpload] Native upload result: $uploadResult');
         if (uploadResult['success'] == true &&
             (uploadResult['public_url'] ?? '').toString().trim().isNotEmpty) {
           resolvedAudioPath = (uploadResult['public_url'] as String).trim();
+          debugPrint('[VoiceUpload] Using uploaded URL: $resolvedAudioPath');
+        } else {
+          debugPrint('[VoiceUpload] Native upload failed, keeping local path');
         }
       }
     }

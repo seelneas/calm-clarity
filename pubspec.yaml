@@ -45,6 +45,7 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   image_picker: ^1.0.7
   http: ^1.2.0
+  http_parser: ^4.1.2
   google_sign_in: ^6.2.1
   record: ^6.2.0
   speech_to_text: ^7.3.0

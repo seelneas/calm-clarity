@@ -564,11 +564,6 @@ class _AdminUserManagementScreenState extends State<AdminUserManagementScreen> {
                                       : 'Status: Suspended',
                                 ),
                                 _pill(
-                                  _asBool(user, 'google_calendar_connected')
-                                      ? 'Google Calendar: Connected'
-                                      : 'Google Calendar: Off',
-                                ),
-                                _pill(
                                   _asBool(user, 'apple_health_connected')
                                       ? 'Apple Health: Connected'
                                       : 'Apple Health: Off',

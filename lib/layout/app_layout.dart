@@ -5,6 +5,7 @@ import '../screens/insights_screen.dart';
 import '../screens/profile_screen.dart';
 import '../screens/admin_console_screen.dart';
 import '../services/ai_admin_service.dart';
+import '../services/preferences_service.dart';
 
 class AppLayout extends StatefulWidget {
   const AppLayout({super.key});
@@ -57,8 +58,10 @@ class _AppLayoutState extends State<AppLayout> {
       base.add(
         const BottomNavigationBarItem(
           icon: Icon(Icons.admin_panel_settings_outlined),
-          activeIcon:
-              Icon(Icons.admin_panel_settings, color: Color(0xFF25D4E4)),
+          activeIcon: Icon(
+            Icons.admin_panel_settings,
+            color: Color(0xFF25D4E4),
+          ),
           label: 'ADMIN',
         ),
       );
@@ -73,6 +76,20 @@ class _AppLayoutState extends State<AppLayout> {
   }
 
   Future<void> _loadAdminAccess() async {
+    final storedRole = await PreferencesService.getUserRole();
+    if (storedRole != 'admin') {
+      if (!mounted) return;
+      if (_isAdminUser) {
+        setState(() {
+          _isAdminUser = false;
+          if (_selectedIndex >= _screens.length) {
+            _selectedIndex = _screens.length - 1;
+          }
+        });
+      }
+      return;
+    }
+
     final access = await AIAdminService.checkAdminAccess();
     if (!mounted) return;
 
@@ -98,10 +115,7 @@ class _AppLayoutState extends State<AppLayout> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: _screens,
-      ),
+      body: IndexedStack(index: _selectedIndex, children: _screens),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           border: Border(

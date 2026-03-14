@@ -15,6 +15,7 @@ class User(Base):
     admin_mfa_enabled = Column(Integer, default=0)
     admin_mfa_secret = Column(String, nullable=True)
     apple_health_connected = Column(Integer, default=0)     # 0: Not Linked, 1: Connected
+    profile_photo_url = Column(String, nullable=True)
 
 
 class PasswordResetToken(Base):

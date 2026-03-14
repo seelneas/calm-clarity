@@ -76,32 +76,8 @@ Optional but common:
 - AI provider key(s): `GROQ_API_KEY` or `GEMINI_API_KEY` or `OPENAI_API_KEY`
 - Queue mode: `REDIS_URL`, `AI_QUEUE_NAME`
 - Admin endpoints: `ADMIN_API_KEY` (optional)
-- Cloud media storage (optional but recommended for deployed profile photos + voice):
-	- `SUPABASE_URL`
-	- `SUPABASE_SERVICE_ROLE_KEY`
-	- `SUPABASE_STORAGE_BUCKET`
-	- `SUPABASE_MEDIA_MAX_UPLOAD_BYTES`
 
 If no AI key is set, backend falls back to rule-based responses.
-
-## Supabase media storage (profile pictures + voice recordings)
-
-By default, local development stores profile photo references and voice paths locally. For cross-device persistence, configure Supabase Storage in backend env:
-
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_STORAGE_BUCKET=calm-clarity-media`
-- Optional MIME tuning:
-	- `SUPABASE_PROFILE_ALLOWED_MIME_TYPES`
-	- `SUPABASE_VOICE_ALLOWED_MIME_TYPES`
-
-Create a public Storage bucket (or adjust access policy), then the backend endpoint uploads authenticated files:
-
-- `POST /media/upload` with multipart fields:
-	- `media_type`: `profile` or `voice`
-	- `file`: binary payload
-
-The response includes `public_url`, which the Flutter app now stores in local profile/journal data.
 
 ## Secret Lifecycle Management
 

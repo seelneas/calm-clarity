@@ -67,7 +67,6 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         final errorType = (result['error_type'] ?? '').toString().toLowerCase();
         final message = (result['message'] ?? 'Google Sign-In failed').toString();
         final mappedMessage = switch (errorType) {
-          'email_verification_required' => 'Please verify your email before signing in.',
           'account_suspended' => 'Your account is suspended. Contact support for reactivation.',
           'account_locked' => 'Too many attempts. Try again shortly, then retry sign-in.',
           _ => message,

@@ -10,6 +10,7 @@ class UserBase(BaseModel):
     name: Optional[str] = None
     role: str = "user"
     apple_health_connected: int = 0
+    profile_photo_url: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str = Field(min_length=8, max_length=256)
@@ -31,7 +32,8 @@ class Token(BaseModel):
     user: UserOut
 
 class SocialAuth(StrictRequestModel):
-    token: str = Field(min_length=8, max_length=4096)
+    token: Optional[str] = Field(default=None, min_length=0, max_length=4096)
+    access_token: Optional[str] = Field(default=None, min_length=0, max_length=4096)
     name: Optional[str] = Field(default=None, max_length=120)
     email: Optional[str] = None
     provider: str = Field(min_length=3, max_length=20) # 'google' or 'apple'
@@ -94,21 +96,6 @@ class SessionInventoryResponse(BaseModel):
     active_sessions: int
     sessions: List[SessionItem]
     devices: List[DeviceItem]
-
-
-class EmailVerificationRequest(StrictRequestModel):
-    token: str = Field(min_length=16, max_length=512)
-
-
-class ResendVerificationRequest(StrictRequestModel):
-    email: EmailStr
-
-
-class VerificationResponse(BaseModel):
-    message: str
-    verification_token: Optional[str] = None
-    verification_link: Optional[str] = None
-    delivery: Optional[str] = None
 
 
 class AdminMfaSetupResponse(BaseModel):

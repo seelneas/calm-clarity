@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
+
 import 'auth_service.dart';
 import 'preferences_service.dart';
 
@@ -196,5 +198,46 @@ class MediaService {
       return MediaType('application', 'octet-stream');
     }
     return MediaType(chunks[0], chunks[1]);
+  }
+
+  static Future<String?> refreshMediaUrl(String url) async {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return null;
+    
+    // Don't refresh data URLs or local paths
+    if (trimmed.startsWith('data:') || 
+        trimmed.startsWith('blob:') ||
+        (!trimmed.startsWith('http://') && !trimmed.startsWith('https://'))) {
+      return trimmed;
+    }
+
+    try {
+      final token = await PreferencesService.getAuthToken();
+      if (token == null || token.isEmpty) return trimmed;
+
+      final response = await http.post(
+        Uri.parse('${AuthService.baseUrl}/media/refresh'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({'url': trimmed}),
+      );
+
+      final result = _parseResponse(
+        statusCode: response.statusCode,
+        body: response.body,
+        fallbackMessage: 'URL refresh failed',
+      );
+
+      if (result['success'] == true && 
+          (result['public_url'] ?? '').toString().trim().isNotEmpty) {
+        return (result['public_url'] as String).trim();
+      }
+    } catch (_) {
+      // Fallback to original URL on error
+    }
+    
+    return trimmed;
   }
 }

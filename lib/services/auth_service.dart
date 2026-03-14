@@ -15,10 +15,7 @@ class AuthService {
   );
   static const String googleWebClientId = String.fromEnvironment(
     'GOOGLE_WEB_CLIENT_ID',
-    defaultValue: String.fromEnvironment(
-      'GOOGLE_CLIENT_ID',
-      defaultValue: '',
-    ),
+    defaultValue: String.fromEnvironment('GOOGLE_CLIENT_ID', defaultValue: ''),
   );
   static const String _adminApiKey = String.fromEnvironment(
     'ADMIN_API_KEY',
@@ -26,16 +23,12 @@ class AuthService {
   );
 
   static final GoogleSignIn _googleSignIn = GoogleSignIn(
-    clientId: kIsWeb && googleWebClientId.isNotEmpty
-        ? googleWebClientId
-        : null,
+    clientId: kIsWeb && googleWebClientId.isNotEmpty ? googleWebClientId : null,
     scopes: ['email', 'profile'],
   );
 
   static final GoogleSignIn _googleCalendarSignIn = GoogleSignIn(
-    clientId: kIsWeb && googleWebClientId.isNotEmpty
-        ? googleWebClientId
-        : null,
+    clientId: kIsWeb && googleWebClientId.isNotEmpty ? googleWebClientId : null,
     scopes: [
       'email',
       'profile',
@@ -89,10 +82,6 @@ class AuthService {
 
   static String _classifyAuthError(String message, int statusCode) {
     final lowered = message.toLowerCase();
-    if (lowered.contains('email verification is required') ||
-        lowered.contains('verification token')) {
-      return 'email_verification_required';
-    }
     if (lowered.contains('account is suspended')) {
       return 'account_suspended';
     }
@@ -140,16 +129,16 @@ class AuthService {
     return headers;
   }
 
-  static Future<Map<String, dynamic>> signup(String name, String email, String password) async {
+  static Future<Map<String, dynamic>> signup(
+    String name,
+    String email,
+    String password,
+  ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/signup'),
         headers: await _buildAuthHeaders(),
-        body: jsonEncode({
-          'name': name,
-          'email': email,
-          'password': password,
-        }),
+        body: jsonEncode({'name': name, 'email': email, 'password': password}),
       );
 
       final data = _tryDecodeJson(response.body);
@@ -164,15 +153,15 @@ class AuthService {
     }
   }
 
-  static Future<Map<String, dynamic>> login(String email, String password) async {
+  static Future<Map<String, dynamic>> login(
+    String email,
+    String password,
+  ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/login'),
         headers: await _buildAuthHeaders(),
-        body: jsonEncode({
-          'email': email,
-          'password': password,
-        }),
+        body: jsonEncode({'email': email, 'password': password}),
       );
 
       final data = _tryDecodeJson(response.body);
@@ -188,11 +177,52 @@ class AuthService {
   }
 
   static Future<void> _handleAuthSuccess(Map<String, dynamic> data) async {
-    final token = data['access_token'];
-    final user = data['user'];
+    final token = (data['access_token'] ?? '').toString();
+    final user = Map<String, dynamic>.from((data['user'] as Map?) ?? const {});
+    final email = (user['email'] ?? '').toString().trim().toLowerCase();
+    final resolvedName = (user['name'] ?? '').toString().trim();
+    final role = (user['role'] ?? 'user').toString().trim().toLowerCase();
+    final photoUrl = (user['profile_photo_url'] ?? '').toString().trim();
     await PreferencesService.setAuthToken(token);
-    await PreferencesService.setUserName(user['name'] ?? '');
-    await PreferencesService.setUserEmail(user['email']);
+    await PreferencesService.setUserName(resolvedName);
+    await PreferencesService.setUserEmail(email);
+    await PreferencesService.setUserRole(role);
+    if (photoUrl.isNotEmpty) {
+      await PreferencesService.setProfilePhotoPath(photoUrl);
+    }
+  }
+
+  static Future<Map<String, dynamic>> syncCurrentUserProfile() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/auth/me'),
+        headers: await _buildAuthHeaders(requireAuthToken: true),
+      );
+
+      final data = _tryDecodeJson(response.body);
+      if (response.statusCode != 200 || data is! Map<String, dynamic>) {
+        return _errorResultFromResponse(
+          response,
+          'Failed to fetch user profile',
+        );
+      }
+
+      final email = (data['email'] ?? '').toString().trim().toLowerCase();
+      final name = (data['name'] ?? '').toString().trim();
+      final role = (data['role'] ?? 'user').toString().trim().toLowerCase();
+      final photoUrl = (data['profile_photo_url'] ?? '').toString().trim();
+      if (email.isNotEmpty) {
+        await PreferencesService.setUserEmail(email);
+      }
+      await PreferencesService.setUserName(name);
+      await PreferencesService.setUserRole(role);
+      if (photoUrl.isNotEmpty) {
+        await PreferencesService.setProfilePhotoPath(photoUrl);
+      }
+      return {'success': true, 'user': data};
+    } catch (e) {
+      return {'success': false, 'message': 'Connection error: $e'};
+    }
   }
 
   static Future<Map<String, dynamic>> signInWithGoogle() async {
@@ -206,18 +236,31 @@ class AuthService {
       }
 
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-      if (googleUser == null) return {'success': false, 'message': 'Sign in cancelled'};
+      if (googleUser == null)
+        return {'success': false, 'message': 'Sign in cancelled'};
 
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
       final String? idToken = googleAuth.idToken;
+      final String? accessToken = googleAuth.accessToken;
 
-      if (idToken == null) return {'success': false, 'message': 'Failed to get ID token'};
+      if ((idToken == null || idToken.isEmpty) &&
+          (accessToken == null || accessToken.isEmpty)) {
+        return {
+          'success': false,
+          'message':
+              'Failed to get Google token. Check OAuth configuration and try again.',
+        };
+      }
 
       final response = await http.post(
         Uri.parse('$baseUrl/auth/google'),
         headers: await _buildAuthHeaders(),
         body: jsonEncode({
-          'token': idToken,
+          'token': idToken ?? '',
+          'access_token': accessToken ?? '',
+          'email': googleUser.email,
+          'name': googleUser.displayName ?? '',
           'provider': 'google',
         }),
       );
@@ -231,14 +274,23 @@ class AuthService {
       }
     } catch (e) {
       debugPrint('Google Sign-In Error: $e');
-      return {'success': false, 'message': 'Google Sign-In Error: ${e.toString().split('\n').first}'};
+      return {
+        'success': false,
+        'message': 'Google Sign-In Error: ${e.toString().split('\n').first}',
+      };
     }
   }
 
-  static Future<Map<String, dynamic>> updateIntegrations(String email, bool google, bool apple) async {
+  static Future<Map<String, dynamic>> updateIntegrations(
+    String email,
+    bool google,
+    bool apple,
+  ) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/update_integrations?email=$email&google=${google ? 1 : 0}&apple=${apple ? 1 : 0}'),
+        Uri.parse(
+          '$baseUrl/update_integrations?email=$email&google=${google ? 1 : 0}&apple=${apple ? 1 : 0}',
+        ),
         headers: {'Content-Type': 'application/json'},
       );
 
@@ -278,7 +330,10 @@ class AuthService {
 
       final googleAccessToken = await _ensureCalendarAccessToken();
       if (googleAccessToken == null || googleAccessToken.isEmpty) {
-        return {'success': false, 'message': 'Google Calendar authorization cancelled'};
+        return {
+          'success': false,
+          'message': 'Google Calendar authorization cancelled',
+        };
       }
 
       final response = await http.post(
@@ -301,7 +356,10 @@ class AuthService {
         };
       }
 
-      return {'success': false, 'message': data['detail'] ?? 'Google Calendar connection failed'};
+      return {
+        'success': false,
+        'message': data['detail'] ?? 'Google Calendar connection failed',
+      };
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }
@@ -330,10 +388,16 @@ class AuthService {
           await _googleCalendarSignIn.signOut();
           return null;
         });
-        return {'success': true, 'message': data['message'] ?? 'Google Calendar disconnected'};
+        return {
+          'success': true,
+          'message': data['message'] ?? 'Google Calendar disconnected',
+        };
       }
 
-      return {'success': false, 'message': data['detail'] ?? 'Disconnect failed'};
+      return {
+        'success': false,
+        'message': data['detail'] ?? 'Disconnect failed',
+      };
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }
@@ -348,7 +412,10 @@ class AuthService {
 
       final googleAccessToken = await _ensureCalendarAccessToken();
       if (googleAccessToken == null || googleAccessToken.isEmpty) {
-        return {'success': false, 'message': 'Google Calendar authorization required'};
+        return {
+          'success': false,
+          'message': 'Google Calendar authorization required',
+        };
       }
 
       final response = await http.post(
@@ -369,7 +436,10 @@ class AuthService {
         };
       }
 
-      return {'success': false, 'message': data['detail'] ?? 'Failed to fetch events'};
+      return {
+        'success': false,
+        'message': data['detail'] ?? 'Failed to fetch events',
+      };
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }
@@ -394,7 +464,10 @@ class AuthService {
       if (response.statusCode == 200) {
         return {'success': true, ...Map<String, dynamic>.from(data)};
       }
-      return {'success': false, 'message': data['detail'] ?? 'Failed to fetch sync status'};
+      return {
+        'success': false,
+        'message': data['detail'] ?? 'Failed to fetch sync status',
+      };
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }
@@ -426,7 +499,10 @@ class AuthService {
       if (response.statusCode == 200) {
         return {'success': true, ...Map<String, dynamic>.from(data)};
       }
-      return {'success': false, 'message': data['detail'] ?? 'Failed to update sync settings'};
+      return {
+        'success': false,
+        'message': data['detail'] ?? 'Failed to update sync settings',
+      };
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }
@@ -446,7 +522,10 @@ class AuthService {
         allowInteractive: allowInteractive,
       );
       if (googleAccessToken == null || googleAccessToken.isEmpty) {
-        return {'success': false, 'message': 'Google Calendar authorization required'};
+        return {
+          'success': false,
+          'message': 'Google Calendar authorization required',
+        };
       }
 
       final response = await http.post(
@@ -465,7 +544,10 @@ class AuthService {
       if (response.statusCode == 200) {
         return {'success': true, ...Map<String, dynamic>.from(data)};
       }
-      return {'success': false, 'message': data['detail'] ?? 'Failed to run calendar sync'};
+      return {
+        'success': false,
+        'message': data['detail'] ?? 'Failed to run calendar sync',
+      };
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }
@@ -520,12 +602,9 @@ class AuthService {
     }
 
     await _runGoogleCalendarAutoSyncTick();
-    _googleCalendarSyncTimer = Timer.periodic(
-      _googleCalendarSyncInterval,
-      (_) {
-        unawaited(_runGoogleCalendarAutoSyncTick());
-      },
-    );
+    _googleCalendarSyncTimer = Timer.periodic(_googleCalendarSyncInterval, (_) {
+      unawaited(_runGoogleCalendarAutoSyncTick());
+    });
   }
 
   static Future<void> stopGoogleCalendarAutoSyncLoop() async {
@@ -543,7 +622,10 @@ class AuthService {
 
       final googleAccessToken = await _ensureCalendarAccessToken();
       if (googleAccessToken == null || googleAccessToken.isEmpty) {
-        return {'success': false, 'message': 'Google Calendar authorization required'};
+        return {
+          'success': false,
+          'message': 'Google Calendar authorization required',
+        };
       }
 
       final start = DateTime.now().add(const Duration(minutes: 15));
@@ -557,7 +639,8 @@ class AuthService {
         body: jsonEncode({
           'access_token': googleAccessToken,
           'summary': 'Calm Clarity Focus Session',
-          'description': 'A mindful check-in session generated from Calm Clarity.',
+          'description':
+              'A mindful check-in session generated from Calm Clarity.',
           'start_iso': start.toUtc().toIso8601String(),
           'end_iso': end.toUtc().toIso8601String(),
           'timezone': 'UTC',
@@ -566,13 +649,13 @@ class AuthService {
 
       final data = jsonDecode(response.body);
       if (response.statusCode == 200) {
-        return {
-          'success': true,
-          'event': Map<String, dynamic>.from(data),
-        };
+        return {'success': true, 'event': Map<String, dynamic>.from(data)};
       }
 
-      return {'success': false, 'message': data['detail'] ?? 'Failed to create event'};
+      return {
+        'success': false,
+        'message': data['detail'] ?? 'Failed to create event',
+      };
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }
@@ -596,22 +679,25 @@ class AuthService {
           'delivery': data['delivery'],
         };
       } else {
-        return {'success': false, 'message': data['detail'] ?? 'Request failed'};
+        return {
+          'success': false,
+          'message': data['detail'] ?? 'Request failed',
+        };
       }
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }
   }
 
-  static Future<Map<String, dynamic>> resetPassword(String token, String newPassword) async {
+  static Future<Map<String, dynamic>> resetPassword(
+    String token,
+    String newPassword,
+  ) async {
     try {
       final response = await http.post(
         Uri.parse('$baseUrl/reset-password'),
         headers: await _buildAuthHeaders(),
-        body: jsonEncode({
-          'token': token,
-          'new_password': newPassword,
-        }),
+        body: jsonEncode({'token': token, 'new_password': newPassword}),
       );
 
       final data = jsonDecode(response.body);
@@ -620,51 +706,6 @@ class AuthService {
       } else {
         return _errorResultFromResponse(response, 'Reset failed');
       }
-    } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
-    }
-  }
-
-  static Future<Map<String, dynamic>> resendEmailVerification(String email) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/resend-email-verification'),
-        headers: await _buildAuthHeaders(),
-        body: jsonEncode({'email': email}),
-      );
-
-      final data = _tryDecodeJson(response.body);
-      if (response.statusCode == 200 && data is Map) {
-        return {
-          'success': true,
-          'message': data['message'] ?? 'Verification email sent',
-          'verification_token': data['verification_token'],
-          'verification_link': data['verification_link'],
-          'delivery': data['delivery'],
-        };
-      }
-      return _errorResultFromResponse(response, 'Unable to resend verification email');
-    } catch (e) {
-      return {'success': false, 'message': 'Connection error: $e'};
-    }
-  }
-
-  static Future<Map<String, dynamic>> verifyEmailToken(String token) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$baseUrl/verify-email'),
-        headers: await _buildAuthHeaders(),
-        body: jsonEncode({'token': token}),
-      );
-
-      final data = _tryDecodeJson(response.body);
-      if (response.statusCode == 200 && data is Map) {
-        return {
-          'success': true,
-          'message': data['message'] ?? 'Email verified successfully',
-        };
-      }
-      return _errorResultFromResponse(response, 'Email verification failed');
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }
@@ -756,7 +797,10 @@ class AuthService {
       if (response.statusCode == 200 && data is Map) {
         return {'success': true, 'data': Map<String, dynamic>.from(data)};
       }
-      return _errorResultFromResponse(response, 'Failed to load active sessions');
+      return _errorResultFromResponse(
+        response,
+        'Failed to load active sessions',
+      );
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }
@@ -770,7 +814,10 @@ class AuthService {
       );
       final data = _tryDecodeJson(response.body);
       if (response.statusCode == 200 && data is Map) {
-        return {'success': true, 'message': data['message'] ?? 'Session revoked'};
+        return {
+          'success': true,
+          'message': data['message'] ?? 'Session revoked',
+        };
       }
       return _errorResultFromResponse(response, 'Failed to revoke session');
     } catch (e) {
@@ -786,9 +833,15 @@ class AuthService {
       );
       final data = _tryDecodeJson(response.body);
       if (response.statusCode == 200 && data is Map) {
-        return {'success': true, 'message': data['message'] ?? 'All sessions revoked'};
+        return {
+          'success': true,
+          'message': data['message'] ?? 'All sessions revoked',
+        };
       }
-      return _errorResultFromResponse(response, 'Failed to revoke all sessions');
+      return _errorResultFromResponse(
+        response,
+        'Failed to revoke all sessions',
+      );
     } catch (e) {
       return {'success': false, 'message': 'Connection error: $e'};
     }

@@ -99,10 +99,7 @@ class AIService {
 
       final data = _decodeBody(response.body);
       if (response.statusCode == 200) {
-        return {
-          'success': true,
-          'job_id': data['job_id'],
-        };
+        return {'success': true, 'job_id': data['job_id']};
       }
 
       return _standardizedError(
@@ -193,11 +190,11 @@ class AIService {
   }) async {
     try {
       final queued = await _enqueueJob('/ai/jobs/analyze-entry', {
-          'transcript': transcript,
-          'summary': summary,
-          'mood': mood.name,
-          'mood_confidence': moodConfidence,
-          'tags': tags,
+        'transcript': transcript,
+        'summary': summary,
+        'mood': mood.name,
+        'mood_confidence': moodConfidence,
+        'tags': tags,
       });
 
       if (queued['success'] != true) {
@@ -216,11 +213,15 @@ class AIService {
         'status': polled['status'],
         'is_blocked': (polled['status'] == 'blocked'),
         'ai_summary': data['ai_summary'] ?? '',
-        'ai_action_items': List<String>.from(data['ai_action_items'] ?? const []),
+        'ai_action_items': List<String>.from(
+          data['ai_action_items'] ?? const [],
+        ),
         'ai_mood_explanation': data['ai_mood_explanation'] ?? '',
         'ai_followup_prompt': data['ai_followup_prompt'] ?? '',
         'safety_flag': data['safety_flag'] ?? false,
-        'crisis_resources': List<String>.from(data['crisis_resources'] ?? const []),
+        'crisis_resources': List<String>.from(
+          data['crisis_resources'] ?? const [],
+        ),
       };
     } catch (error) {
       return _standardizedError(
@@ -235,6 +236,17 @@ class AIService {
     required List<JournalEntry> memoryPool,
     required String timeframeLabel,
   }) async {
+    if (entries.isEmpty) {
+      return {
+        'success': false,
+        'error_code': 'insufficient_data',
+        'message':
+            'Add at least one journal entry to generate weekly insights.',
+        'user_message':
+            'No entries found for this timeframe. Add an entry or choose a longer timeframe.',
+      };
+    }
+
     try {
       final memorySnippets = _buildMemorySnippets(
         focusEntries: entries,
@@ -255,21 +267,21 @@ class AIService {
           .toList();
 
       final queued = await _enqueueJob('/ai/jobs/weekly-insights', {
-          'timeframe_label': timeframeLabel,
-          'memory_snippets': memorySnippets,
-          'memory_candidates': memoryCandidates,
-          'entries': entries
-              .map(
-                (entry) => {
-                  'timestamp': entry.timestamp.toIso8601String(),
-                  'summary': entry.summary,
-                  'mood': entry.mood.name,
-                  'tags': entry.tags,
-                  'ai_summary': entry.aiSummary,
-                  'transcript': entry.transcript,
-                },
-              )
-              .toList(),
+        'timeframe_label': timeframeLabel,
+        'memory_snippets': memorySnippets,
+        'memory_candidates': memoryCandidates,
+        'entries': entries
+            .map(
+              (entry) => {
+                'timestamp': entry.timestamp.toIso8601String(),
+                'summary': entry.summary,
+                'mood': entry.mood.name,
+                'tags': entry.tags,
+                'ai_summary': entry.aiSummary,
+                'transcript': entry.transcript,
+              },
+            )
+            .toList(),
       });
 
       if (queued['success'] != true) {
@@ -297,7 +309,9 @@ class AIService {
           data['memory_snippets_used'] ?? const [],
         ),
         'safety_flag': data['safety_flag'] ?? false,
-        'crisis_resources': List<String>.from(data['crisis_resources'] ?? const []),
+        'crisis_resources': List<String>.from(
+          data['crisis_resources'] ?? const [],
+        ),
       };
     } catch (error) {
       return _standardizedError(
@@ -331,8 +345,9 @@ class AIService {
         continue;
       }
 
-      final snippet =
-          candidate.length > 220 ? '${candidate.substring(0, 220).trim()}...' : candidate;
+      final snippet = candidate.length > 220
+          ? '${candidate.substring(0, 220).trim()}...'
+          : candidate;
       if (!snippets.contains(snippet)) {
         snippets.add(snippet);
       }
@@ -411,7 +426,9 @@ class AIService {
         data['memory_snippets_used'] ?? const [],
       ),
       'safety_flag': data['safety_flag'] ?? false,
-      'crisis_resources': List<String>.from(data['crisis_resources'] ?? const []),
+      'crisis_resources': List<String>.from(
+        data['crisis_resources'] ?? const [],
+      ),
     };
   }
 }

@@ -6,6 +6,7 @@ class PreferencesService {
   static const String _keyShowOnboarding = 'show_onboarding';
   static const String _keyUserName = 'user_name';
   static const String _keyUserEmail = 'user_email';
+  static const String _keyUserRole = 'user_role';
   static const String _keyDarkMode = 'dark_mode';
   static const String _keyFontSize = 'font_size';
   static const String _keyProfilePhoto = 'profile_photo';
@@ -17,9 +18,12 @@ class PreferencesService {
   static const String _keyGoogleCalendarConnected = 'google_calendar_connected';
   static const String _keyAppleHealthConnected = 'apple_health_connected';
   static const String _keyAiProcessingEnabled = 'ai_processing_enabled';
-  static const String _keyNotificationReminderEnabled = 'notification_daily_reminder_enabled';
-  static const String _keyNotificationReminderHour = 'notification_daily_reminder_hour';
-  static const String _keyNotificationReminderMinute = 'notification_daily_reminder_minute';
+  static const String _keyNotificationReminderEnabled =
+      'notification_daily_reminder_enabled';
+  static const String _keyNotificationReminderHour =
+      'notification_daily_reminder_hour';
+  static const String _keyNotificationReminderMinute =
+      'notification_daily_reminder_minute';
   static const String _keyNotificationDeviceId = 'notification_device_id';
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
 
@@ -53,6 +57,20 @@ class PreferencesService {
     await prefs.setString(_keyUserEmail, email);
   }
 
+  static Future<String> getUserRole() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getString(_keyUserRole) ?? 'user').trim().toLowerCase();
+  }
+
+  static Future<void> setUserRole(String role) async {
+    final prefs = await SharedPreferences.getInstance();
+    final normalized = role.trim().toLowerCase();
+    await prefs.setString(
+      _keyUserRole,
+      normalized.isEmpty ? 'user' : normalized,
+    );
+  }
+
   static Future<bool> isDarkMode() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_keyDarkMode) ?? true;
@@ -79,7 +97,35 @@ class PreferencesService {
     if (value == null || value.trim().isEmpty) {
       return null;
     }
-    return value;
+
+    final normalized = value.trim();
+    if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
+        (normalized.startsWith("'") && normalized.endsWith("'"))) {
+      final unwrapped = normalized.substring(1, normalized.length - 1).trim();
+      if (unwrapped.isNotEmpty) {
+        return unwrapped;
+      }
+    }
+
+    final lower = normalized.toLowerCase();
+    final likelySerializedMap =
+        normalized.startsWith('{') &&
+        (lower.contains('publicurl') ||
+            lower.contains('public_url') ||
+            lower.contains('signedurl') ||
+            lower.contains('signed_url') ||
+            lower.contains('url'));
+    if (likelySerializedMap) {
+      final urlMatch = RegExp(r'https?://[^\s\"\'"'"'{}]+').firstMatch(
+        normalized,
+      );
+      final extractedUrl = urlMatch?.group(0)?.trim();
+      if (extractedUrl != null && extractedUrl.isNotEmpty) {
+        return extractedUrl;
+      }
+    }
+
+    return normalized;
   }
 
   static Future<void> setProfilePhotoPath(String path) async {

@@ -1,19 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
-import 'package:share_plus/share_plus.dart';
 import '../theme.dart';
 import '../providers/journal_provider.dart';
 import '../models/journal_entry.dart';
 import '../services/preferences_service.dart';
 import '../services/auth_service.dart';
 import '../services/media_service.dart';
-import '../services/account_access_service.dart';
 import '../providers/theme_provider.dart';
 import '../widgets/guest_mode_banner.dart';
 
@@ -30,15 +26,95 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _profilePhotoPath;
   double _fontSize = 16.0;
   bool _isLoading = true;
-  bool _googleConnected = false;
-  bool _isSyncingGoogleEvents = false;
-  List<Map<String, dynamic>> _googleUpcomingEvents = const [];
   final ImagePicker _picker = ImagePicker();
+
+  bool _isRemotePhotoPath(String path) {
+    final normalized = path.trim().toLowerCase();
+    return normalized.startsWith('http://') ||
+        normalized.startsWith('https://') ||
+        normalized.startsWith('data:image/') ||
+        normalized.startsWith('blob:');
+  }
+
+  bool _isDataImagePath(String path) {
+    return path.trim().toLowerCase().startsWith('data:image/');
+  }
+
+  Widget _buildAvatarFallback(ThemeData theme) {
+    return Container(
+      color: theme.cardColor,
+      child: Icon(Icons.person, color: AppTheme.primaryColor, size: 48),
+    );
+  }
+
+  Widget _buildProfileAvatar(ThemeData theme) {
+    final photoPath = (_profilePhotoPath ?? '').trim();
+    debugPrint('[ProfileAvatar] photoPath: "$photoPath"');
+    if (photoPath.isEmpty) {
+      debugPrint('[ProfileAvatar] photoPath is empty, showing fallback');
+      return _buildAvatarFallback(theme);
+    }
+
+    if (_isDataImagePath(photoPath)) {
+      debugPrint('[ProfileAvatar] Using data:image path');
+      try {
+        final commaIndex = photoPath.indexOf(',');
+        if (commaIndex <= 0 || commaIndex >= photoPath.length - 1) {
+          return _buildAvatarFallback(theme);
+        }
+        final encoded = photoPath.substring(commaIndex + 1);
+        final bytes = base64Decode(encoded);
+        if (bytes.isEmpty) {
+          return _buildAvatarFallback(theme);
+        }
+        return Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('[ProfileAvatar] data:image decode error: $error');
+            return _buildAvatarFallback(theme);
+          },
+        );
+      } catch (e) {
+        debugPrint('[ProfileAvatar] data:image exception: $e');
+        return _buildAvatarFallback(theme);
+      }
+    }
+
+    if (kIsWeb || _isRemotePhotoPath(photoPath)) {
+      debugPrint('[ProfileAvatar] Loading network image: ${photoPath.length > 100 ? "${photoPath.substring(0, 100)}..." : photoPath}');
+      return Image.network(
+        photoPath,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          debugPrint('[ProfileAvatar] Network image load FAILED: $error');
+          return _buildAvatarFallback(theme);
+        },
+      );
+    }
+
+    debugPrint('[ProfileAvatar] Loading local file image');
+    return Image.file(
+      File(photoPath),
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        debugPrint('[ProfileAvatar] File image load FAILED: $error');
+        return _buildAvatarFallback(theme);
+      },
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _loadPreferences();
+    // Proactively sync from backend to get latest profile photo URL
+    AuthService.syncCurrentUserProfile().then((result) {
+      debugPrint('[ProfileScreen] syncCurrentUserProfile result: $result');
+      if (mounted) _loadPreferences();
+    }).catchError((e) {
+      debugPrint('[ProfileScreen] syncCurrentUserProfile error: $e');
+    });
   }
 
   Future<void> _loadPreferences() async {
@@ -46,7 +122,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final email = await PreferencesService.getUserEmail();
     final photo = await PreferencesService.getProfilePhotoPath();
     final fs = await PreferencesService.getFontSize();
-    final gc = await PreferencesService.isGoogleCalendarConnected();
 
     if (mounted) {
       setState(() {
@@ -54,12 +129,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _userEmail = email;
         _profilePhotoPath = photo;
         _fontSize = fs;
-        _googleConnected = gc;
         _isLoading = false;
       });
 
-      if (gc) {
-        await _refreshGoogleEvents();
+      // Proactively refresh the photo URL if it's a remote Supabase URL
+      if (photo != null && _isRemotePhotoPath(photo)) {
+        final refreshed = await MediaService.refreshMediaUrl(photo);
+        if (refreshed != null && refreshed != photo && mounted) {
+          debugPrint('[ProfileScreen] Photo URL refreshed: $refreshed');
+          await PreferencesService.setProfilePhotoPath(refreshed);
+          setState(() {
+            _profilePhotoPath = refreshed;
+          });
+        }
       }
     }
   }
@@ -157,7 +239,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     ),
                                   ),
                                   child: ClipOval(
-                                    child: _buildProfileImage(theme),
+                                    child: _buildProfileAvatar(theme),
                                   ),
                                 ),
                                 Positioned(
@@ -300,43 +382,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           isDestructive: true,
                           onTap: _removeProfilePhoto,
                         ),
-                        _buildSettingsItem(
-                          Icons.file_download_outlined,
-                          'Export Data',
-                          onTap: () {
-                            _exportData(provider);
-                          },
-                        ),
-                        _buildSettingsItem(
-                          Icons.delete_outline,
-                          'Delete All Data',
-                          isDestructive: true,
-                          onTap: () {
-                            _confirmDeleteAll(context, provider);
-                          },
-                        ),
                       ]),
                       const SizedBox(height: 32),
                       _buildSectionHeader('APPEARANCE'),
                       _buildSettingsContainer(
                         Consumer<ThemeProvider>(
                           builder: (context, themeProvider, _) {
-                            final isDark =
-                                themeProvider.themeMode == ThemeMode.dark;
                             return Column(
                               children: [
-                                _buildToggleItem(
-                                  Icons.dark_mode_outlined,
-                                  'Dark Mode',
-                                  isDark,
-                                  (v) async {
-                                    await themeProvider.toggleTheme(v);
-                                  },
-                                ),
-                                const Divider(
-                                  color: Colors.blueGrey,
-                                  height: 32,
-                                ),
                                 Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
@@ -389,22 +442,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           },
                         ),
                       ),
-                      const SizedBox(height: 32),
-                      // Integrations
-                      _buildSectionHeader('INTEGRATIONS'),
-                      _buildIntegrationCard(
-                        Icons.calendar_month,
-                        'Google Calendar',
-                        _googleConnected
-                            ? 'Connected • Tap for actions'
-                            : 'Tap to connect',
-                        _googleConnected,
-                        onTap: _handleGoogleCalendarTap,
-                      ),
-                      if (_googleConnected) ...[
-                        const SizedBox(height: 16),
-                        _buildGoogleEventsPreviewCard(),
-                      ],
                       const SizedBox(height: 32),
                       // Support
                       _buildSectionHeader('SUPPORT & ABOUT'),
@@ -503,92 +540,36 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // ── Dialogs & Logic ──
 
-  bool _isRemoteImagePath(String path) {
-    final normalized = path.trim().toLowerCase();
-    return normalized.startsWith('http://') ||
-        normalized.startsWith('https://') ||
-        normalized.startsWith('data:image/') ||
-        normalized.startsWith('blob:');
-  }
-
-  Widget _buildProfileImage(ThemeData theme) {
-    final photoPath = (_profilePhotoPath ?? '').trim();
-    if (photoPath.isEmpty) {
-      return Image.network(
-        'https://i.pravatar.cc/300',
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return Container(
-            color: theme.cardColor,
-            child: Icon(
-              Icons.person,
-              color: AppTheme.primaryColor,
-              size: 48,
-            ),
-          );
-        },
-      );
-    }
-
-    if (kIsWeb || _isRemoteImagePath(photoPath)) {
-      return Image.network(
-        photoPath,
-        fit: BoxFit.cover,
-        errorBuilder: (context, error, stackTrace) {
-          return Container(
-            color: theme.cardColor,
-            child: Icon(
-              Icons.person,
-              color: AppTheme.primaryColor,
-              size: 48,
-            ),
-          );
-        },
-      );
-    }
-
-    return Image.file(
-      File(photoPath),
-      fit: BoxFit.cover,
-      errorBuilder: (context, error, stackTrace) {
-        return Container(
-          color: theme.cardColor,
-          child: Icon(
-            Icons.person,
-            color: AppTheme.primaryColor,
-            size: 48,
-          ),
-        );
-      },
-    );
-  }
-
   Future<void> _pickImage() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
     if (image != null) {
       String storedPhoto = image.path;
-      if (kIsWeb) {
-        final bytes = await image.readAsBytes();
-        final encoded = base64Encode(bytes);
-        final lowerName = image.name.toLowerCase();
-        var mime = 'image/jpeg';
-        if (lowerName.endsWith('.png')) {
-          mime = 'image/png';
-        } else if (lowerName.endsWith('.gif')) {
-          mime = 'image/gif';
-        } else if (lowerName.endsWith('.webp')) {
-          mime = 'image/webp';
-        }
-        storedPhoto = 'data:$mime;base64,$encoded';
+      final uploadResult = await MediaService.uploadProfilePhoto(image);
+      debugPrint('[ProfilePhoto] Upload result: $uploadResult');
+      if (uploadResult['success'] == true &&
+          (uploadResult['public_url'] ?? '').toString().trim().isNotEmpty) {
+        storedPhoto = (uploadResult['public_url'] as String).trim();
+        debugPrint('[ProfilePhoto] Using uploaded URL: $storedPhoto');
       } else {
-        final uploadResult = await MediaService.uploadProfilePhoto(image);
-        if (uploadResult['success'] == true &&
-            (uploadResult['public_url'] ?? '').toString().trim().isNotEmpty) {
-          storedPhoto = (uploadResult['public_url'] as String).trim();
+        debugPrint('[ProfilePhoto] Upload failed or no public_url, using local fallback');
+        if (kIsWeb) {
+          final bytes = await image.readAsBytes();
+          final encoded = base64Encode(bytes);
+          final lowerName = image.name.toLowerCase();
+          var mime = 'image/jpeg';
+          if (lowerName.endsWith('.png')) {
+            mime = 'image/png';
+          } else if (lowerName.endsWith('.gif')) {
+            mime = 'image/gif';
+          } else if (lowerName.endsWith('.webp')) {
+            mime = 'image/webp';
+          }
+          storedPhoto = 'data:$mime;base64,$encoded';
         }
       }
 
       await PreferencesService.setProfilePhotoPath(storedPhoto);
+      debugPrint('[ProfilePhoto] Saved photo path: $storedPhoto');
       setState(() {
         _profilePhotoPath = storedPhoto;
       });
@@ -714,147 +695,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Future<void> _exportData(JournalProvider provider) async {
-    final entriesData = provider.entries
-        .map(
-          (e) => {
-            'id': e.id,
-            'timestamp': e.timestamp.toIso8601String(),
-            'mood': e.mood.toString(),
-            'summary': e.summary,
-            'transcript': e.transcript,
-            'tags': e.tags,
-            'action_items': provider
-                .getActionItems(e.id)
-                .map(
-                  (a) => {
-                    'id': a.id,
-                    'description': a.description,
-                    'completed': a.isCompleted,
-                  },
-                )
-                .toList(),
-          },
-        )
-        .toList();
-
-    final exportPayload = {
-      'app': 'Calm Clarity',
-      'version': '2.1.0',
-      'export_date': DateTime.now().toIso8601String(),
-      'user': _userName,
-      'entries': entriesData,
-    };
-    final jsonString = const JsonEncoder.withIndent(
-      '  ',
-    ).convert(exportPayload);
-    final fileName =
-        'calm_clarity_export_${DateTime.now().millisecondsSinceEpoch}.json';
-
-    try {
-      final shareText =
-          'Calm Clarity data export for $_userName (${entriesData.length} entries).';
-
-      if (kIsWeb) {
-        final bytes = Uint8List.fromList(utf8.encode(jsonString));
-        final webFile = XFile.fromData(
-          bytes,
-          mimeType: 'application/json',
-          name: fileName,
-        );
-
-        await Share.shareXFiles(
-          [webFile],
-          fileNameOverrides: [fileName],
-          text: shareText,
-          subject: 'Calm Clarity Export',
-        );
-      } else {
-        final directory = await getApplicationDocumentsDirectory();
-        final file = File('${directory.path}/$fileName');
-        await file.writeAsString(jsonString, flush: true);
-
-        await Share.shareXFiles(
-          [XFile(file.path)],
-          fileNameOverrides: [fileName],
-          text: shareText,
-          subject: 'Calm Clarity Export',
-        );
-      }
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Export created and share sheet opened.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Export failed: $error'),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-    }
-  }
-
-  void _confirmDeleteAll(BuildContext context, JournalProvider provider) {
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        final dialogTheme = Theme.of(ctx);
-        return AlertDialog(
-          backgroundColor: AppTheme.cardColor,
-          title: Text(
-            'Delete All Data',
-            style: TextStyle(color: dialogTheme.colorScheme.onSurface),
-          ),
-          content: const Text(
-            'This will permanently delete all your journal entries and action items. This cannot be undone.',
-            style: TextStyle(color: Colors.blueGrey),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text(
-                'Cancel',
-                style: TextStyle(color: Colors.blueGrey),
-              ),
-            ),
-            TextButton(
-              onPressed: () async {
-                final messenger = ScaffoldMessenger.of(context);
-                final ids = provider.entries.map((e) => e.id).toList();
-                for (var id in ids) {
-                  await provider.deleteEntry(id);
-                }
-                if (ctx.mounted) Navigator.pop(ctx);
-                if (mounted) {
-                  messenger.showSnackBar(
-                    const SnackBar(
-                      content: Text('All data cleared'),
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                }
-              },
-              child: const Text(
-                'Delete All',
-                style: TextStyle(
-                  color: Colors.redAccent,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   void _showInfoDialog(BuildContext context, String title, String content) {
     final theme = Theme.of(context);
     showDialog(
@@ -945,305 +785,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (!mounted) return;
 
     Navigator.pushNamedAndRemoveUntil(context, '/auth', (route) => false);
-  }
-
-  Future<void> _handleGoogleCalendarTap() async {
-    final allowed = await AccountAccessService.requireAccount(
-      context,
-      featureLabel: 'Google Calendar integration',
-    );
-    if (!allowed) return;
-
-    if (!_googleConnected) {
-      await _connectGoogleCalendar();
-      return;
-    }
-
-    if (!mounted) return;
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Theme.of(context).cardColor,
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.sync),
-                title: const Text('Sync Upcoming Events'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _syncGoogleCalendar();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.event_available),
-                title: const Text('Create Focus Event'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _createGoogleFocusEvent();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.link_off, color: Colors.redAccent),
-                title: const Text(
-                  'Disconnect',
-                  style: TextStyle(color: Colors.redAccent),
-                ),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _disconnectGoogleCalendar();
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _connectGoogleCalendar() async {
-    _showLoadingDialog('Connecting Google Calendar...');
-    final result = await AuthService.connectGoogleCalendar();
-    if (mounted) {
-      Navigator.pop(context);
-      if (result['success'] == true) {
-        setState(() => _googleConnected = true);
-        await AuthService.updateGoogleCalendarSyncSettings(
-          autoSyncEnabled: true,
-          syncIntervalMinutes: 5,
-        );
-        await AuthService.startGoogleCalendarAutoSyncIfEnabled();
-        await _refreshGoogleEvents();
-        _showSnack('Google Calendar connected.', success: true);
-      } else {
-        _showSnack(result['message'] ?? 'Google Calendar connection failed');
-      }
-    }
-  }
-
-  Future<void> _syncGoogleCalendar() async {
-    _showLoadingDialog('Syncing upcoming events...');
-    final syncResult = await AuthService.runGoogleCalendarSync();
-    final result = syncResult['success'] == true
-        ? {
-            'success': true,
-            'events': List<Map<String, dynamic>>.from(
-              syncResult['events'] ?? const [],
-            ),
-          }
-        : await _refreshGoogleEvents();
-    if (mounted) {
-      Navigator.pop(context);
-      if (result['success'] == true) {
-        final events = List<Map<String, dynamic>>.from(
-          result['events'] ?? const [],
-        );
-        if (events.isEmpty) {
-          _showSnack('No upcoming events found.', success: true);
-        } else {
-          final first = events.first;
-          final summary = first['summary'] ?? 'Event';
-          _showSnack(
-            'Synced ${events.length} events. Next: $summary',
-            success: true,
-          );
-        }
-      } else {
-        _showSnack(result['message'] ?? 'Event sync failed');
-      }
-    }
-  }
-
-  Future<void> _createGoogleFocusEvent() async {
-    _showLoadingDialog('Creating focus event...');
-    final start = DateTime.now().add(const Duration(minutes: 15));
-    final end = start.add(const Duration(minutes: 30));
-    final result = await AuthService.runGoogleCalendarSync(
-      localChanges: [
-        {
-          'action': 'create',
-          'client_event_id': 'focus-${DateTime.now().millisecondsSinceEpoch}',
-          'summary': 'Calm Clarity Focus Session',
-          'description':
-              'A mindful check-in session generated from Calm Clarity.',
-          'start_iso': start.toUtc().toIso8601String(),
-          'end_iso': end.toUtc().toIso8601String(),
-          'timezone': 'UTC',
-        },
-      ],
-    );
-    if (mounted) {
-      Navigator.pop(context);
-      if (result['success'] == true) {
-        _showSnack('Focus event created in Google Calendar.', success: true);
-      } else {
-        _showSnack(result['message'] ?? 'Could not create event');
-      }
-    }
-  }
-
-  Future<void> _disconnectGoogleCalendar() async {
-    _showLoadingDialog('Disconnecting Google Calendar...');
-    final result = await AuthService.disconnectGoogleCalendar();
-    if (mounted) {
-      Navigator.pop(context);
-      if (result['success'] == true) {
-        await AuthService.stopGoogleCalendarAutoSyncLoop();
-        setState(() {
-          _googleConnected = false;
-          _googleUpcomingEvents = const [];
-        });
-        _showSnack('Google Calendar disconnected.', success: true);
-      } else {
-        _showSnack(result['message'] ?? 'Disconnect failed');
-      }
-    }
-  }
-
-  Future<Map<String, dynamic>> _refreshGoogleEvents() async {
-    if (mounted) {
-      setState(() => _isSyncingGoogleEvents = true);
-    }
-
-    final result = await AuthService.runGoogleCalendarSync();
-
-    if (mounted) {
-      setState(() {
-        _isSyncingGoogleEvents = false;
-        if (result['success'] == true) {
-          _googleUpcomingEvents = List<Map<String, dynamic>>.from(
-            result['events'] ?? const [],
-          );
-        }
-      });
-    }
-    return result;
-  }
-
-  Widget _buildGoogleEventsPreviewCard() {
-    final theme = Theme.of(context);
-    final colors = theme.extension<AppColors>()!;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: theme.cardColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: theme.dividerColor),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.event_note,
-                size: 18,
-                color: AppTheme.primaryColor,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Upcoming Events',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: theme.colorScheme.onSurface,
-                ),
-              ),
-              const Spacer(),
-              if (_isSyncingGoogleEvents)
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (_googleUpcomingEvents.isEmpty)
-            Text(
-              'No upcoming events synced yet.',
-              style: TextStyle(fontSize: 12, color: colors.textMuted),
-            )
-          else
-            ..._googleUpcomingEvents.take(3).map((event) {
-              final title = (event['summary'] as String?)?.trim();
-              final start = (event['start_iso'] as String?)?.trim();
-              final formattedStart = _formatEventDateTime(start);
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 3),
-                      child: Icon(
-                        Icons.circle,
-                        size: 8,
-                        color: AppTheme.primaryColor,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        formattedStart != null
-                            ? '${title ?? 'Untitled'} • $formattedStart'
-                            : (title ?? 'Untitled'),
-                        style: TextStyle(fontSize: 12, color: colors.textBody),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
-        ],
-      ),
-    );
-  }
-
-  String? _formatEventDateTime(String? isoValue) {
-    if (isoValue == null || isoValue.isEmpty) {
-      return null;
-    }
-
-    final parsed = DateTime.tryParse(isoValue);
-    if (parsed == null) {
-      return isoValue;
-    }
-
-    final local = parsed.toLocal();
-    return DateFormat('MMM d, h:mm a').format(local);
-  }
-
-  void _showLoadingDialog(String message) {
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppTheme.cardColor,
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(color: AppTheme.primaryColor),
-            const SizedBox(height: 16),
-            Text(message),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showSnack(String message, {bool success = false}) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: success ? Colors.green : Colors.blueGrey,
-      ),
-    );
   }
 
   // ── Helpers ──
@@ -1410,90 +951,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ? null
           : const Icon(Icons.chevron_right, color: Colors.blueGrey),
       onTap: onTap,
-    );
-  }
-
-  Widget _buildToggleItem(
-    IconData icon,
-    String label,
-    bool value,
-    ValueChanged<bool> onChanged,
-  ) {
-    final theme = Theme.of(context);
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Row(
-          children: [
-            Icon(icon, color: AppTheme.primaryColor, size: 20),
-            const SizedBox(width: 12),
-            Text(
-              label,
-              style: TextStyle(
-                color: theme.colorScheme.onSurface,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
-        Switch(
-          value: value,
-          activeThumbColor: AppTheme.primaryColor,
-          onChanged: onChanged,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildIntegrationCard(
-    IconData icon,
-    String label,
-    String status,
-    bool connected, {
-    VoidCallback? onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
-        decoration: BoxDecoration(
-          color: AppTheme.cardColor.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: connected
-                ? AppTheme.primaryColor.withValues(alpha: 0.3)
-                : Colors.transparent,
-          ),
-        ),
-        child: Column(
-          children: [
-            Icon(
-              icon,
-              size: 32,
-              color: connected ? AppTheme.primaryColor : Colors.blueGrey,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              label,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              status.toUpperCase(),
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: connected ? Colors.greenAccent : Colors.blueGrey,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

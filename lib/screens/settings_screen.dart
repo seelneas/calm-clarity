@@ -1,11 +1,9 @@
 import 'dart:io';
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../theme.dart';
-import 'package:provider/provider.dart';
-import '../providers/theme_provider.dart';
 import '../services/preferences_service.dart';
 import '../services/notification_service.dart';
 import '../services/auth_service.dart';
@@ -28,6 +26,82 @@ class _SettingsScreenState extends State<SettingsScreen> {
   TimeOfDay _dailyReminderTime = const TimeOfDay(hour: 20, minute: 0);
   bool _isSyncingNotifications = false;
   String? _lastBackupDate;
+
+  bool _isRemotePhotoPath(String path) {
+    final normalized = path.trim().toLowerCase();
+    return normalized.startsWith('http://') ||
+        normalized.startsWith('https://') ||
+        normalized.startsWith('data:image/') ||
+        normalized.startsWith('blob:');
+  }
+
+  bool _isDataImagePath(String path) {
+    return path.trim().toLowerCase().startsWith('data:image/');
+  }
+
+  Widget _buildAvatarFallback(ThemeData theme) {
+    return Container(
+      color: theme.cardColor,
+      child: const Icon(Icons.person, color: AppTheme.primaryColor, size: 48),
+    );
+  }
+
+  Widget _buildAvatarPreview(ThemeData theme, String? rawPhotoPath) {
+    final photoPath = (rawPhotoPath ?? '').trim();
+    debugPrint('[SettingsAvatar] photoPath: "$photoPath"');
+    if (photoPath.isEmpty) {
+      debugPrint('[SettingsAvatar] photoPath is empty, showing fallback');
+      return _buildAvatarFallback(theme);
+    }
+
+    if (_isDataImagePath(photoPath)) {
+      debugPrint('[SettingsAvatar] Using data:image path');
+      try {
+        final commaIndex = photoPath.indexOf(',');
+        if (commaIndex <= 0 || commaIndex >= photoPath.length - 1) {
+          return _buildAvatarFallback(theme);
+        }
+        final encoded = photoPath.substring(commaIndex + 1);
+        final bytes = base64Decode(encoded);
+        if (bytes.isEmpty) {
+          return _buildAvatarFallback(theme);
+        }
+        return Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('[SettingsAvatar] data:image decode error: $error');
+            return _buildAvatarFallback(theme);
+          },
+        );
+      } catch (e) {
+        debugPrint('[SettingsAvatar] data:image exception: $e');
+        return _buildAvatarFallback(theme);
+      }
+    }
+
+    if (kIsWeb || _isRemotePhotoPath(photoPath)) {
+      debugPrint('[SettingsAvatar] Loading network image: ${photoPath.length > 100 ? "${photoPath.substring(0, 100)}..." : photoPath}');
+      return Image.network(
+        photoPath,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          debugPrint('[SettingsAvatar] Network image load FAILED: $error');
+          return _buildAvatarFallback(theme);
+        },
+      );
+    }
+
+    debugPrint('[SettingsAvatar] Loading local file image');
+    return Image.file(
+      File(photoPath),
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        debugPrint('[SettingsAvatar] File image load FAILED: $error');
+        return _buildAvatarFallback(theme);
+      },
+    );
+  }
 
   @override
   void initState() {
@@ -57,14 +131,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     await _syncNotificationSettingsFromBackend();
-  }
-
-  bool _isRemoteImagePath(String path) {
-    final normalized = path.trim().toLowerCase();
-    return normalized.startsWith('http://') ||
-        normalized.startsWith('https://') ||
-        normalized.startsWith('data:image/') ||
-        normalized.startsWith('blob:');
   }
 
   Future<void> _setNotificationsEnabled(bool enabled) async {
@@ -177,8 +243,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.extension<AppColors>()!;
-    final themeProvider = Provider.of<ThemeProvider>(context);
-    final isDark = themeProvider.themeMode == ThemeMode.dark;
 
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -245,18 +309,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 32),
           _buildSectionHeader('PREFERENCES'),
-          _buildSettingsItem(
-            context: context,
-            icon: Icons.dark_mode_outlined,
-            title: 'Theme Mode',
-            subtitle: isDark ? 'Dark mode active' : 'Light mode active',
-            trailing: Switch(
-              value: isDark,
-              onChanged: (v) => themeProvider.toggleTheme(v),
-              activeThumbColor: AppTheme.primaryColor,
-            ),
-            onTap: () => themeProvider.toggleTheme(!isDark),
-          ),
           _buildSettingsItem(
             context: context,
             icon: Icons.notifications_none_outlined,
@@ -352,20 +404,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               if (!allowed) return;
               if (!context.mounted) return;
               _showBackupDialog(context);
-            },
-          ),
-          _buildSettingsItem(
-            context: context,
-            icon: Icons.delete_outline,
-            title: 'Clear Local Data',
-            titleColor: Colors.redAccent,
-            onTap: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Go to Profile tab to delete all data'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
             },
           ),
           const SizedBox(height: 32),
@@ -470,52 +508,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                         ),
                         child: ClipOval(
-                          child: photoPath != null
-                              ? (kIsWeb || _isRemoteImagePath(photoPath!)
-                                    ? Image.network(
-                                        photoPath!,
-                                        fit: BoxFit.cover,
-                                        errorBuilder:
-                                            (context, error, stackTrace) {
-                                              return Container(
-                                                color: theme.cardColor,
-                                                child: const Icon(
-                                                  Icons.person,
-                                                  color: AppTheme.primaryColor,
-                                                  size: 48,
-                                                ),
-                                              );
-                                            },
-                                      )
-                                    : Image.file(
-                                        File(photoPath!),
-                                        fit: BoxFit.cover,
-                                        errorBuilder:
-                                            (context, error, stackTrace) {
-                                              return Container(
-                                                color: theme.cardColor,
-                                                child: const Icon(
-                                                  Icons.person,
-                                                  color: AppTheme.primaryColor,
-                                                  size: 48,
-                                                ),
-                                              );
-                                            },
-                                      ))
-                              : Image.network(
-                                  'https://i.pravatar.cc/300',
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Container(
-                                      color: theme.cardColor,
-                                      child: const Icon(
-                                        Icons.person,
-                                        color: AppTheme.primaryColor,
-                                        size: 48,
-                                      ),
-                                    );
-                                  },
-                                ),
+                          child: _buildAvatarPreview(theme, photoPath),
                         ),
                       ),
                       Positioned(
@@ -528,32 +521,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             );
                             if (image != null) {
                               String nextPhotoPath = image.path;
-                              if (kIsWeb) {
-                                final bytes = await image.readAsBytes();
-                                final encoded = base64Encode(bytes);
-                                final lowerName = image.name.toLowerCase();
-                                var mime = 'image/jpeg';
-                                if (lowerName.endsWith('.png')) {
-                                  mime = 'image/png';
-                                } else if (lowerName.endsWith('.gif')) {
-                                  mime = 'image/gif';
-                                } else if (lowerName.endsWith('.webp')) {
-                                  mime = 'image/webp';
-                                }
-                                nextPhotoPath = 'data:$mime;base64,$encoded';
+                              final uploadResult =
+                                  await MediaService.uploadProfilePhoto(image);
+                              debugPrint('[SettingsPhoto] Upload result: $uploadResult');
+                              if (uploadResult['success'] == true &&
+                                  (uploadResult['public_url'] ?? '')
+                                      .toString()
+                                      .trim()
+                                      .isNotEmpty) {
+                                nextPhotoPath =
+                                    (uploadResult['public_url'] as String)
+                                        .trim();
+                                debugPrint('[SettingsPhoto] Using uploaded URL: $nextPhotoPath');
                               } else {
-                                final uploadResult =
-                                    await MediaService.uploadProfilePhoto(
-                                      image,
-                                    );
-                                if (uploadResult['success'] == true &&
-                                    (uploadResult['public_url'] ?? '')
-                                        .toString()
-                                        .trim()
-                                        .isNotEmpty) {
-                                  nextPhotoPath =
-                                      (uploadResult['public_url'] as String)
-                                          .trim();
+                                debugPrint('[SettingsPhoto] Upload failed/missing URL, fallback to local');
+                                if (kIsWeb) {
+                                  final bytes = await image.readAsBytes();
+                                  final encoded = base64Encode(bytes);
+                                  final lowerName = image.name.toLowerCase();
+                                  var mime = 'image/jpeg';
+                                  if (lowerName.endsWith('.png')) {
+                                    mime = 'image/png';
+                                  } else if (lowerName.endsWith('.gif')) {
+                                    mime = 'image/gif';
+                                  } else if (lowerName.endsWith('.webp')) {
+                                    mime = 'image/webp';
+                                  }
+                                  nextPhotoPath = 'data:$mime;base64,$encoded';
                                 }
                               }
 
@@ -729,15 +723,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         onChanged: (val) async {
                           setDialogState(() => isAutoSync = val);
                           await PreferencesService.setAutoSyncEnabled(val);
-                          await AuthService.updateGoogleCalendarSyncSettings(
-                            autoSyncEnabled: val,
-                            syncIntervalMinutes: 5,
-                          );
-                          if (val) {
-                            await AuthService.startGoogleCalendarAutoSyncIfEnabled();
-                          } else {
-                            await AuthService.stopGoogleCalendarAutoSyncLoop();
-                          }
                         },
                       ),
                     ),

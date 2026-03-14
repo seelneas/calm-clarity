@@ -47,8 +47,6 @@ HSTS_PRELOAD = os.getenv("HSTS_PRELOAD", "false").lower() in {"1", "true", "yes"
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
 FRONTEND_ROUTE_MODE = os.getenv("FRONTEND_ROUTE_MODE", "query").lower()
 RESET_TOKEN_EXPIRE_MINUTES = int(os.getenv("RESET_TOKEN_EXPIRE_MINUTES", "30"))
-EMAIL_VERIFICATION_EXPIRE_MINUTES = int(os.getenv("EMAIL_VERIFICATION_EXPIRE_MINUTES", "60"))
-REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() in {"1", "true", "yes"}
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "14"))
 OPENAI_API_KEY = get_runtime_secret("OPENAI_API_KEY", default="", enforce_managed_ref_in_production=True)
@@ -266,6 +264,8 @@ def _ensure_user_security_columns() -> None:
         if "role" not in columns:
             connection.execute(text("ALTER TABLE users ADD COLUMN role VARCHAR DEFAULT 'user'"))
             connection.execute(text("UPDATE users SET role = 'user' WHERE role IS NULL OR TRIM(role) = ''"))
+        if "profile_photo_url" not in columns:
+            connection.execute(text("ALTER TABLE users ADD COLUMN profile_photo_url VARCHAR"))
 
 
 def _ensure_refresh_token_columns() -> None:
@@ -1543,7 +1543,11 @@ def _require_admin(
     if not _is_admin_user(user):
         raise HTTPException(status_code=403, detail="Admin role required")
 
-    if ADMIN_API_KEY.strip() and (admin_key or "").strip() != ADMIN_API_KEY.strip():
+    if (
+        APP_ENV.lower() != "development"
+        and ADMIN_API_KEY.strip()
+        and (admin_key or "").strip() != ADMIN_API_KEY.strip()
+    ):
         raise HTTPException(status_code=403, detail="Invalid admin key")
 
     if ADMIN_ALLOWED_EMAILS and (user.email or "").strip().lower() not in ADMIN_ALLOWED_EMAILS:
@@ -1647,7 +1651,10 @@ def _resolve_cors_settings() -> tuple[list[str], str | None, bool]:
 
     if wildcard:
         return [], LOCAL_DEV_ORIGIN_REGEX, True
-    return origins, None, True
+
+    # In local/dev, Flutter web and Chrome often run on dynamic localhost ports.
+    # Keep explicit trusted origins while also allowing localhost/127.0.0.1 on any port.
+    return origins, LOCAL_DEV_ORIGIN_REGEX, True
 
 
 def _normalize_samesite(value: str) -> str:
@@ -1811,43 +1818,6 @@ def _validate_password_policy(password: str) -> None:
         raise HTTPException(status_code=400, detail="Password must include at least one number")
     if not re.search(r"[^A-Za-z0-9]", value):
         raise HTTPException(status_code=400, detail="Password must include at least one special character")
-
-
-def _build_email_verification_link(token: str) -> str:
-    base = FRONTEND_BASE_URL.rstrip("/")
-    if FRONTEND_ROUTE_MODE == "query":
-        return f"{base}/?verify_email_token={token}"
-    if FRONTEND_ROUTE_MODE == "path":
-        return f"{base}/verify-email?token={token}"
-    return f"{base}/#/verify-email?token={token}"
-
-
-def _send_email_verification(recipient_email: str, verification_token: str) -> bool:
-    if not SMTP_HOST or not SMTP_FROM:
-        return False
-
-    verification_link = _build_email_verification_link(verification_token)
-    msg = EmailMessage()
-    msg["Subject"] = "Verify your Calm Clarity email"
-    msg["From"] = SMTP_FROM
-    msg["To"] = recipient_email
-    msg.set_content(
-        "Welcome to Calm Clarity!\n\n"
-        f"Verify your email to secure your account (expires in {EMAIL_VERIFICATION_EXPIRE_MINUTES} minutes):\n"
-        f"{verification_link}\n\n"
-        "If this wasn’t you, you can ignore this message."
-    )
-
-    try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
-            if SMTP_USE_TLS:
-                smtp.starttls()
-            if SMTP_USERNAME and SMTP_PASSWORD:
-                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
-            smtp.send_message(msg)
-        return True
-    except Exception:
-        return False
 
 
 def _hash_refresh_token(token: str) -> str:
@@ -2524,33 +2494,15 @@ def signup(
         email=user.email,
         hashed_password=hashed_pwd,
         role="admin" if _is_admin_email(user.email) else "user",
-        email_verified=0,
+        email_verified=1,
         token_version=0,
     )
     db.add(new_user)
     db.flush()
 
-    now = _utc_now()
-    raw_token = secrets.token_urlsafe(32)
-    verification_link = _build_email_verification_link(raw_token)
-    db.add(
-        models.EmailVerificationToken(
-            user_id=new_user.id,
-            token_hash=_hash_reset_token(raw_token),
-            created_at=now,
-            expires_at=now + timedelta(minutes=EMAIL_VERIFICATION_EXPIRE_MINUTES),
-            used_at=None,
-        )
-    )
-
     access_token, refresh_token = _issue_token_pair(db, new_user, request=request)
     db.commit()
     db.refresh(new_user)
-
-    _send_email_verification(new_user.email, raw_token)
-
-    if APP_ENV.lower() == "development" and not SMTP_HOST:
-        print(f"[dev] verification_link={verification_link}")
 
     _set_auth_cookies(response, access_token, refresh_token)
 
@@ -2571,7 +2523,7 @@ def login(
     normalized_email = (user_credentials.email or "").strip().lower()
     _enforce_login_abuse_controls(request, normalized_email)
 
-    user = db.query(models.User).filter(models.User.email == user_credentials.email).first()
+    user = db.query(models.User).filter(models.User.email == normalized_email).first()
     if not user or not auth.verify_password(user_credentials.password, user.hashed_password):
         _record_auth_failure(normalized_email, _client_ip(request))
         _append_security_audit_log(
@@ -2599,19 +2551,11 @@ def login(
         )
         db.commit()
         raise HTTPException(status_code=403, detail="Account is suspended")
-    if REQUIRE_EMAIL_VERIFICATION and int(user.email_verified or 0) != 1:
-        _record_auth_failure(normalized_email, _client_ip(request))
-        _append_security_audit_log(
-            db,
-            event_type="login_failed",
-            severity="warn",
-            actor_user=user,
-            target_user=user,
-            request=request,
-            metadata={"reason": "email_unverified"},
-        )
-        db.commit()
-        raise HTTPException(status_code=403, detail="Email verification is required")
+
+    previous_role = (user.role or "user").strip().lower()
+    _sync_user_role(user, db=db, request=request, actor_user=user, reason="login")
+    if (user.role or "").strip().lower() != previous_role:
+        db.flush()
 
     _clear_auth_failures(normalized_email, _client_ip(request))
     
@@ -2624,6 +2568,16 @@ def login(
         "token_type": "bearer",
         "user": user,
     }
+
+
+@app.get("/auth/me", response_model=schemas.UserOut)
+def get_authenticated_user_profile(
+    current_user: models.User = Depends(_get_current_user),
+):
+    if current_user.profile_photo_url:
+        from supabase_storage import refresh_media_url
+        current_user.profile_photo_url = refresh_media_url(current_user.profile_photo_url)
+    return current_user
 
 @app.post("/update_integrations", response_model=schemas.UserOut)
 def update_integrations(
@@ -3008,67 +2962,6 @@ def revoke_all_my_sessions(
     return {"message": "All active sessions were revoked."}
 
 
-@app.post("/verify-email", response_model=schemas.MessageResponse)
-def verify_email(payload: schemas.EmailVerificationRequest, db: Session = Depends(get_db)):
-    now = _utc_now()
-    token_hash = _hash_reset_token(payload.token)
-    token_record = db.query(models.EmailVerificationToken).filter(
-        models.EmailVerificationToken.token_hash == token_hash,
-        models.EmailVerificationToken.used_at.is_(None),
-        models.EmailVerificationToken.expires_at > now,
-    ).first()
-    if not token_record:
-        raise HTTPException(status_code=400, detail="Invalid or expired verification token")
-
-    user = db.query(models.User).filter(models.User.id == token_record.user_id).first()
-    if not user:
-        raise HTTPException(status_code=400, detail="Invalid verification request")
-
-    user.email_verified = 1
-    token_record.used_at = now
-    db.commit()
-    return {"message": "Email verified successfully"}
-
-
-@app.post("/resend-email-verification", response_model=schemas.VerificationResponse)
-def resend_email_verification(payload: schemas.ResendVerificationRequest, db: Session = Depends(get_db)):
-    generic_message = "If an account with that email exists, a verification email has been sent."
-    user = db.query(models.User).filter(models.User.email == payload.email).first()
-    if not user:
-        return {"message": generic_message, "delivery": "email"}
-    if int(user.email_verified or 0) == 1:
-        return {"message": "Email is already verified", "delivery": "none"}
-
-    now = _utc_now()
-    db.query(models.EmailVerificationToken).filter(
-        models.EmailVerificationToken.user_id == user.id,
-        models.EmailVerificationToken.used_at.is_(None),
-    ).update({"used_at": now}, synchronize_session=False)
-
-    raw_token = secrets.token_urlsafe(32)
-    verification_link = _build_email_verification_link(raw_token)
-    db.add(
-        models.EmailVerificationToken(
-            user_id=user.id,
-            token_hash=_hash_reset_token(raw_token),
-            created_at=now,
-            expires_at=now + timedelta(minutes=EMAIL_VERIFICATION_EXPIRE_MINUTES),
-            used_at=None,
-        )
-    )
-    db.commit()
-
-    delivered = _send_email_verification(user.email, raw_token)
-    if APP_ENV.lower() == "development" and not delivered:
-        return {
-            "message": "Email delivery is unavailable in development. Use the token/link below for testing.",
-            "verification_token": raw_token,
-            "verification_link": verification_link,
-            "delivery": "dev_link",
-        }
-
-    return {"message": generic_message, "delivery": "email"}
-
 @app.post("/auth/google", response_model=schemas.Token)
 def google_auth(
     request: Request,
@@ -3080,10 +2973,55 @@ def google_auth(
         raise HTTPException(status_code=500, detail="Server misconfiguration: GOOGLE_CLIENT_ID is missing")
 
     try:
-        # Verify with actual Client ID from env
-        id_info = id_token.verify_oauth2_token(
-            token_data.token, google_requests.Request(), GOOGLE_CLIENT_ID
-        )
+        id_info = None
+
+        id_token_value = (token_data.token or "").strip()
+        access_token_value = (token_data.access_token or "").strip()
+
+        if id_token_value:
+            try:
+                id_info = id_token.verify_oauth2_token(
+                    id_token_value,
+                    google_requests.Request(),
+                    GOOGLE_CLIENT_ID,
+                )
+            except ValueError:
+                id_info = None
+
+        if id_info is None and access_token_value:
+            tokeninfo_response = requests.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"access_token": access_token_value},
+                timeout=8,
+            )
+            if tokeninfo_response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Invalid Google token")
+
+            tokeninfo = tokeninfo_response.json()
+            token_audience = (tokeninfo.get("aud") or tokeninfo.get("azp") or "").strip()
+            if token_audience and token_audience != GOOGLE_CLIENT_ID:
+                raise HTTPException(status_code=400, detail="Google token audience mismatch")
+
+            userinfo_response = requests.get(
+                "https://openidconnect.googleapis.com/v1/userinfo",
+                headers={"Authorization": f"Bearer {access_token_value}"},
+                timeout=8,
+            )
+            if userinfo_response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Invalid Google token")
+
+            userinfo = userinfo_response.json()
+            email_value = (userinfo.get("email") or "").strip().lower()
+            if not email_value:
+                raise HTTPException(status_code=400, detail="Google account email unavailable")
+
+            id_info = {
+                "email": email_value,
+                "name": userinfo.get("name") or token_data.name or "",
+            }
+
+        if id_info is None:
+            raise HTTPException(status_code=400, detail="Invalid Google token")
 
         email = id_info['email']
         name = id_info.get('name', '')
@@ -3391,6 +3329,7 @@ async def upload_media(
     media_type: str = Form(...),
     file: UploadFile = File(...),
     user: models.User = Depends(_get_current_user),
+    db: Session = Depends(get_db),
 ):
     if not is_supabase_storage_enabled():
         raise HTTPException(status_code=503, detail="Supabase storage is not configured")
@@ -3433,6 +3372,12 @@ async def upload_media(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Media storage upload failed: {exc}") from exc
 
+    if normalized_media_type == "profile":
+        user.profile_photo_url = stored["public_url"]
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
     return {
         "media_type": normalized_media_type,
         "filename": file.filename or "upload.bin",
@@ -3443,6 +3388,28 @@ async def upload_media(
         "public_url": stored["public_url"],
     }
 
+
+@app.post("/media/refresh", response_model=schemas.MediaUploadResponse)
+async def refresh_media(
+    payload: dict = Body(...),
+    user: models.User = Depends(_get_current_user),
+):
+    url = payload.get("url")
+    if not url:
+        raise HTTPException(status_code=400, detail="Missing url")
+
+    from supabase_storage import refresh_media_url
+    refreshed = refresh_media_url(url)
+    
+    return {
+        "media_type": "refreshed",
+        "filename": "refreshed",
+        "content_type": "application/octet-stream",
+        "size_bytes": 0,
+        "bucket": "",
+        "storage_path": "",
+        "public_url": refreshed,
+    }
 
 @app.get("/notifications/preferences", response_model=schemas.NotificationPreferencesResponse)
 def get_notification_preferences(
