@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Header, Request, Body, Response, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, Header, Request, Body, Response, UploadFile, File, Form
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -30,6 +30,7 @@ from rq import Queue, Retry
 from rq.registry import StartedJobRegistry, FailedJobRegistry
 from rq.job import Job
 from secret_manager import get_runtime_secret
+from supabase_storage import upload_user_media, is_supabase_storage_enabled
 
 load_dotenv()
 
@@ -155,6 +156,23 @@ MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", "5242880"))
 ALLOWED_UPLOAD_MIME_TYPES = {
     value.strip().lower()
     for value in os.getenv("ALLOWED_UPLOAD_MIME_TYPES", "image/jpeg,image/png,image/webp").split(",")
+    if value.strip()
+}
+SUPABASE_MEDIA_MAX_UPLOAD_BYTES = int(os.getenv("SUPABASE_MEDIA_MAX_UPLOAD_BYTES", "15728640"))
+SUPABASE_PROFILE_ALLOWED_MIME_TYPES = {
+    value.strip().lower()
+    for value in os.getenv(
+        "SUPABASE_PROFILE_ALLOWED_MIME_TYPES",
+        "image/jpeg,image/png,image/webp",
+    ).split(",")
+    if value.strip()
+}
+SUPABASE_VOICE_ALLOWED_MIME_TYPES = {
+    value.strip().lower()
+    for value in os.getenv(
+        "SUPABASE_VOICE_ALLOWED_MIME_TYPES",
+        "audio/mp4,audio/m4a,audio/aac,audio/mpeg,audio/wav,audio/x-wav,audio/webm",
+    ).split(",")
     if value.strip()
 }
 CSRF_PROTECTION_ENABLED = os.getenv("CSRF_PROTECTION_ENABLED", "true").lower() in {"1", "true", "yes"}
@@ -3365,6 +3383,64 @@ async def validate_upload(
         "size_bytes": size_bytes,
         "accepted": True,
         "scan_status": scan_status,
+    }
+
+
+@app.post("/media/upload", response_model=schemas.MediaUploadResponse)
+async def upload_media(
+    media_type: str = Form(...),
+    file: UploadFile = File(...),
+    user: models.User = Depends(_get_current_user),
+):
+    if not is_supabase_storage_enabled():
+        raise HTTPException(status_code=503, detail="Supabase storage is not configured")
+
+    normalized_media_type = (media_type or "").strip().lower()
+    if normalized_media_type not in {"profile", "voice"}:
+        raise HTTPException(status_code=400, detail="media_type must be one of: profile, voice")
+
+    content_type = (file.content_type or "").strip().lower()
+    allowed_types = (
+        SUPABASE_PROFILE_ALLOWED_MIME_TYPES
+        if normalized_media_type == "profile"
+        else SUPABASE_VOICE_ALLOWED_MIME_TYPES
+    )
+    if content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail="Unsupported media type")
+
+    content = await file.read(SUPABASE_MEDIA_MAX_UPLOAD_BYTES + 1)
+    size_bytes = len(content)
+    if size_bytes == 0:
+        raise HTTPException(status_code=400, detail="Empty file upload")
+    if size_bytes > SUPABASE_MEDIA_MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File too large")
+
+    if normalized_media_type == "profile" and not _validate_upload_magic(content, content_type):
+        raise HTTPException(status_code=400, detail="File signature does not match declared type")
+
+    scan_status = _scan_upload_content(content)
+    if scan_status != "clean":
+        raise HTTPException(status_code=400, detail=f"File rejected: {scan_status}")
+
+    try:
+        stored = upload_user_media(
+            user_id=user.id,
+            media_type=normalized_media_type,
+            content_type=content_type,
+            content=content,
+            original_filename=file.filename,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Media storage upload failed: {exc}") from exc
+
+    return {
+        "media_type": normalized_media_type,
+        "filename": file.filename or "upload.bin",
+        "content_type": content_type,
+        "size_bytes": size_bytes,
+        "bucket": stored["bucket"],
+        "storage_path": stored["storage_path"],
+        "public_url": stored["public_url"],
     }
 
 

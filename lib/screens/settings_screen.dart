@@ -9,6 +9,7 @@ import '../providers/theme_provider.dart';
 import '../services/preferences_service.dart';
 import '../services/notification_service.dart';
 import '../services/auth_service.dart';
+import '../services/media_service.dart';
 import '../services/account_access_service.dart';
 import '../widgets/guest_mode_banner.dart';
 import 'notification_diagnostics_screen.dart';
@@ -56,6 +57,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     await _syncNotificationSettingsFromBackend();
+  }
+
+  bool _isRemoteImagePath(String path) {
+    final normalized = path.trim().toLowerCase();
+    return normalized.startsWith('http://') ||
+        normalized.startsWith('https://') ||
+        normalized.startsWith('data:image/') ||
+        normalized.startsWith('blob:');
   }
 
   Future<void> _setNotificationsEnabled(bool enabled) async {
@@ -462,7 +471,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                         child: ClipOval(
                           child: photoPath != null
-                              ? (kIsWeb
+                              ? (kIsWeb || _isRemoteImagePath(photoPath!)
                                     ? Image.network(
                                         photoPath!,
                                         fit: BoxFit.cover,
@@ -532,6 +541,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   mime = 'image/webp';
                                 }
                                 nextPhotoPath = 'data:$mime;base64,$encoded';
+                              } else {
+                                final uploadResult =
+                                    await MediaService.uploadProfilePhoto(
+                                      image,
+                                    );
+                                if (uploadResult['success'] == true &&
+                                    (uploadResult['public_url'] ?? '')
+                                        .toString()
+                                        .trim()
+                                        .isNotEmpty) {
+                                  nextPhotoPath =
+                                      (uploadResult['public_url'] as String)
+                                          .trim();
+                                }
                               }
 
                               setDialogState(() {

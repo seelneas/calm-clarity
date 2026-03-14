@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:record/record.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -7,12 +8,15 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import '../theme.dart';
 import '../providers/journal_provider.dart';
 import '../models/journal_entry.dart';
 import '../models/action_item.dart';
 import '../services/ai_service.dart';
+import '../services/media_service.dart';
 import '../services/account_access_service.dart';
 import '../services/notification_service.dart';
 
@@ -526,6 +530,32 @@ class _VoiceRecordingScreenState extends State<VoiceRecordingScreen>
     final tags = _buildTags(transcript);
     final moodDecision = _inferMoodDecision(transcript);
     final items = _buildActionItems(entryId, transcript);
+    String? resolvedAudioPath = recordedPath ?? _audioFilePath;
+
+    if (resolvedAudioPath != null && resolvedAudioPath.trim().isNotEmpty) {
+      if (kIsWeb) {
+        final webBytes = await _resolveWebAudioBytes(resolvedAudioPath);
+        if (webBytes != null && webBytes.isNotEmpty) {
+          final uploadResult = await MediaService.uploadVoiceRecordingBytes(
+            webBytes,
+            filename: 'voice_$entryId.webm',
+            contentType: 'audio/webm',
+          );
+          if (uploadResult['success'] == true &&
+              (uploadResult['public_url'] ?? '').toString().trim().isNotEmpty) {
+            resolvedAudioPath = (uploadResult['public_url'] as String).trim();
+          }
+        }
+      } else {
+        final uploadResult = await MediaService.uploadVoiceRecordingFromPath(
+          resolvedAudioPath,
+        );
+        if (uploadResult['success'] == true &&
+            (uploadResult['public_url'] ?? '').toString().trim().isNotEmpty) {
+          resolvedAudioPath = (uploadResult['public_url'] as String).trim();
+        }
+      }
+    }
 
     final entry = JournalEntry(
       id: entryId,
@@ -539,7 +569,7 @@ class _VoiceRecordingScreenState extends State<VoiceRecordingScreen>
       aiActionItems: const [],
       aiMoodExplanation: null,
       aiFollowupPrompt: null,
-      audioPath: recordedPath ?? _audioFilePath,
+      audioPath: resolvedAudioPath,
     );
 
     if (context.mounted) {
@@ -617,6 +647,37 @@ class _VoiceRecordingScreenState extends State<VoiceRecordingScreen>
         Navigator.pop(context);
       }
     }
+  }
+
+  Future<Uint8List?> _resolveWebAudioBytes(String rawPath) async {
+    final normalized = rawPath.trim();
+    if (normalized.isEmpty) return null;
+
+    if (normalized.startsWith('data:')) {
+      final commaIndex = normalized.indexOf(',');
+      if (commaIndex < 0) return null;
+      final payload = normalized.substring(commaIndex + 1);
+      try {
+        return base64Decode(payload);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    if (normalized.startsWith('blob:') ||
+        normalized.startsWith('http://') ||
+        normalized.startsWith('https://')) {
+      try {
+        final response = await http.get(Uri.parse(normalized));
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          return response.bodyBytes;
+        }
+      } catch (_) {
+        return null;
+      }
+    }
+
+    return null;
   }
 
   Future<void> _togglePauseResume() async {

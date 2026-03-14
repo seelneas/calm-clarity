@@ -500,6 +500,16 @@ class UploadValidationResponse(BaseModel):
     scan_status: str
 
 
+class MediaUploadResponse(BaseModel):
+    media_type: str
+    filename: str
+    content_type: str
+    size_bytes: int
+    bucket: str
+    storage_path: str
+    public_url: str
+
+
 class NotificationTriggerResponse(BaseModel):
     event_type: str
     attempted: int

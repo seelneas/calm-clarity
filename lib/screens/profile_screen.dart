@@ -12,6 +12,7 @@ import '../providers/journal_provider.dart';
 import '../models/journal_entry.dart';
 import '../services/preferences_service.dart';
 import '../services/auth_service.dart';
+import '../services/media_service.dart';
 import '../services/account_access_service.dart';
 import '../providers/theme_provider.dart';
 import '../widgets/guest_mode_banner.dart';
@@ -156,66 +157,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                     ),
                                   ),
                                   child: ClipOval(
-                                    child: _profilePhotoPath != null
-                                        ? (kIsWeb
-                                              ? Image.network(
-                                                  _profilePhotoPath!,
-                                                  fit: BoxFit.cover,
-                                                  errorBuilder:
-                                                      (
-                                                        context,
-                                                        error,
-                                                        stackTrace,
-                                                      ) {
-                                                        return Container(
-                                                          color:
-                                                              theme.cardColor,
-                                                          child: Icon(
-                                                            Icons.person,
-                                                            color: AppTheme
-                                                                .primaryColor,
-                                                            size: 48,
-                                                          ),
-                                                        );
-                                                      },
-                                                )
-                                              : Image.file(
-                                                  File(_profilePhotoPath!),
-                                                  fit: BoxFit.cover,
-                                                  errorBuilder:
-                                                      (
-                                                        context,
-                                                        error,
-                                                        stackTrace,
-                                                      ) {
-                                                        return Container(
-                                                          color:
-                                                              theme.cardColor,
-                                                          child: Icon(
-                                                            Icons.person,
-                                                            color: AppTheme
-                                                                .primaryColor,
-                                                            size: 48,
-                                                          ),
-                                                        );
-                                                      },
-                                                ))
-                                        : Image.network(
-                                            'https://i.pravatar.cc/300',
-                                            fit: BoxFit.cover,
-                                            errorBuilder:
-                                                (context, error, stackTrace) {
-                                                  return Container(
-                                                    color: theme.cardColor,
-                                                    child: Icon(
-                                                      Icons.person,
-                                                      color:
-                                                          AppTheme.primaryColor,
-                                                      size: 48,
-                                                    ),
-                                                  );
-                                                },
-                                          ),
+                                    child: _buildProfileImage(theme),
                                   ),
                                 ),
                                 Positioned(
@@ -561,6 +503,66 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   // ── Dialogs & Logic ──
 
+  bool _isRemoteImagePath(String path) {
+    final normalized = path.trim().toLowerCase();
+    return normalized.startsWith('http://') ||
+        normalized.startsWith('https://') ||
+        normalized.startsWith('data:image/') ||
+        normalized.startsWith('blob:');
+  }
+
+  Widget _buildProfileImage(ThemeData theme) {
+    final photoPath = (_profilePhotoPath ?? '').trim();
+    if (photoPath.isEmpty) {
+      return Image.network(
+        'https://i.pravatar.cc/300',
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return Container(
+            color: theme.cardColor,
+            child: Icon(
+              Icons.person,
+              color: AppTheme.primaryColor,
+              size: 48,
+            ),
+          );
+        },
+      );
+    }
+
+    if (kIsWeb || _isRemoteImagePath(photoPath)) {
+      return Image.network(
+        photoPath,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return Container(
+            color: theme.cardColor,
+            child: Icon(
+              Icons.person,
+              color: AppTheme.primaryColor,
+              size: 48,
+            ),
+          );
+        },
+      );
+    }
+
+    return Image.file(
+      File(photoPath),
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) {
+        return Container(
+          color: theme.cardColor,
+          child: Icon(
+            Icons.person,
+            color: AppTheme.primaryColor,
+            size: 48,
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _pickImage() async {
     final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
     if (image != null) {
@@ -578,6 +580,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           mime = 'image/webp';
         }
         storedPhoto = 'data:$mime;base64,$encoded';
+      } else {
+        final uploadResult = await MediaService.uploadProfilePhoto(image);
+        if (uploadResult['success'] == true &&
+            (uploadResult['public_url'] ?? '').toString().trim().isNotEmpty) {
+          storedPhoto = (uploadResult['public_url'] as String).trim();
+        }
       }
 
       await PreferencesService.setProfilePhotoPath(storedPhoto);
