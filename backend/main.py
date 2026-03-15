@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import base64
 import struct
-import smtplib
+import resend
 import json
 import uuid
 import time
@@ -16,7 +16,7 @@ import re
 import html
 from collections import defaultdict
 from datetime import datetime, timedelta
-from email.message import EmailMessage
+# Removed email.message import as Resend doesn't need it for basic usage
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text, inspect
@@ -106,12 +106,9 @@ NOTIFICATION_INVALID_TOKEN_MARKERS = [
     if marker.strip()
 ]
 
-SMTP_HOST = os.getenv("SMTP_HOST")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USERNAME = get_runtime_secret("SMTP_USERNAME", default="", enforce_managed_ref_in_production=True) or None
-SMTP_PASSWORD = get_runtime_secret("SMTP_PASSWORD", default="", enforce_managed_ref_in_production=True) or None
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USERNAME or "")
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
+RESEND_API_KEY = get_runtime_secret("RESEND_API_KEY", default="", enforce_managed_ref_in_production=True) or None
+RESEND_FROM = os.getenv("RESEND_FROM", "onboarding@resend.dev")
+resend.api_key = RESEND_API_KEY
 
 PASSWORD_POLICY_MIN_LENGTH = int(os.getenv("PASSWORD_POLICY_MIN_LENGTH", "10"))
 AUTH_USE_COOKIES = os.getenv("AUTH_USE_COOKIES", "false").lower() in {"1", "true", "yes"}
@@ -1781,28 +1778,22 @@ def _build_reset_link(reset_token: str) -> str:
 
 
 def _send_reset_email(recipient_email: str, reset_token: str) -> bool:
-    if not SMTP_HOST or not SMTP_FROM:
+    if not RESEND_API_KEY:
         return False
 
     reset_link = _build_reset_link(reset_token)
-    msg = EmailMessage()
-    msg["Subject"] = "Calm Clarity Password Reset"
-    msg["From"] = SMTP_FROM
-    msg["To"] = recipient_email
-    msg.set_content(
-        "We received a request to reset your Calm Clarity password.\n\n"
-        f"Use this link to reset your password (expires in {RESET_TOKEN_EXPIRE_MINUTES} minutes):\n"
-        f"{reset_link}\n\n"
-        "If you didn't request this, you can safely ignore this email."
-    )
-
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as smtp:
-            if SMTP_USE_TLS:
-                smtp.starttls()
-            if SMTP_USERNAME and SMTP_PASSWORD:
-                smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
-            smtp.send_message(msg)
+        resend.Emails.send({
+            "from": RESEND_FROM,
+            "to": recipient_email,
+            "subject": "Calm Clarity Password Reset",
+            "text": (
+                "We received a request to reset your Calm Clarity password.\n\n"
+                f"Use this link to reset your password (expires in {RESET_TOKEN_EXPIRE_MINUTES} minutes):\n"
+                f"{reset_link}\n\n"
+                "If you didn't request this, you can safely ignore this email."
+            )
+        })
         return True
     except Exception:
         return False
@@ -2632,7 +2623,7 @@ def forgot_password(
 
     if APP_ENV.lower() == "development" and not email_sent:
         return {
-            "message": "Email not sent because SMTP is not configured. Use the temporary reset token/link below for local testing.",
+            "message": "Email not sent because Resend is not configured. Use the temporary reset token/link below for local testing.",
             "reset_token": raw_token,
             "reset_link": reset_link,
             "delivery": "dev_link",

@@ -34,7 +34,7 @@ def _print_aws_commands(env: str, jwt_secret: str, admin_api_key: str) -> None:
     print("# 2) Store new provider credentials after generating them at the provider")
     print(
         "aws secretsmanager put-secret-value "
-        f"--secret-id {prefix}/smtp-password --secret-string '<new-smtp-password>'"
+        f"--secret-id {prefix}/resend-api-key --secret-string '<new-resend-key>'"
     )
     print(
         "aws secretsmanager put-secret-value "
@@ -64,7 +64,7 @@ def _print_gcp_commands(env: str, jwt_secret: str, admin_api_key: str, project_i
     )
     print("# 2) Store new provider credentials after generating them at the provider")
     print(
-        f"printf '%s' '<new-smtp-password>' | gcloud secrets versions add {prefix}-smtp-password "
+        f"printf '%s' '<new-resend-key>' | gcloud secrets versions add {prefix}-resend-api-key "
         f"--project {project_id} --data-file=-"
     )
     print(
@@ -96,7 +96,7 @@ def _print_azure_commands(env: str, jwt_secret: str, admin_api_key: str, vault_n
     print("# 2) Store new provider credentials after generating them at the provider")
     print(
         "az keyvault secret set "
-        f"--vault-name {vault_name} --name {prefix}-smtp-password --value '<new-smtp-password>'"
+        f"--vault-name {vault_name} --name {prefix}-resend-api-key --value '<new-resend-key>'"
     )
     print(
         "az keyvault secret set "
@@ -123,7 +123,7 @@ def _print_vault_commands(env: str, jwt_secret: str, admin_api_key: str) -> None
     print("# 2) Store new provider credentials after generating them at the provider")
     print(
         "vault kv patch "
-        f"{path} SMTP_PASSWORD='<new-smtp-password>' OPENAI_API_KEY='<new-openai-key>' "
+        f"{path} RESEND_API_KEY='<new-resend-key>' OPENAI_API_KEY='<new-openai-key>' "
         "GROQ_API_KEY='<new-groq-key>' GEMINI_API_KEY='<new-gemini-key>'"
     )
 

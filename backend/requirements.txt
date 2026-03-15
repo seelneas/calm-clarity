@@ -14,3 +14,5 @@ sentence-transformers
 pytest
 supabase
 psycopg2-binary
+resend
+
