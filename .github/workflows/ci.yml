@@ -111,17 +111,13 @@ jobs:
       - name: Run integration test on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 30
+          api-level: 29
           target: google_apis
           arch: x86_64
-          emulator-boot-timeout: 900
-          disable-linux-hw-accel: true
+          profile: pixel_6
           disable-animations: true
-          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect -accel off
+          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim
           script: |
             flutter doctor -v
-            adb start-server
-            adb devices -l
             adb wait-for-device
-            flutter devices
-            flutter test integration_test/observability_e2e_test.dart -d android --reporter expanded --timeout 30m
+            flutter test integration_test/observability_e2e_test.dart --reporter expanded --timeout 30m

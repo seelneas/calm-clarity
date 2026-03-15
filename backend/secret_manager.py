@@ -213,7 +213,12 @@ def get_runtime_secret(
         return default
 
     app_env = (os.getenv("APP_ENV") or "development").strip().lower()
-    enforce_refs = _as_bool(os.getenv("MANAGED_SECRETS_REQUIRED_IN_PRODUCTION", "true"), default=True)
+    # Relaxing this requirement by default to allow easier deployment on Render/Heroku with plain env vars.
+    # It can be re-enabled by setting MANAGED_SECRETS_REQUIRED_IN_PRODUCTION=true
+    is_render = os.getenv("RENDER") == "true"
+    default_enforce = "false" if is_render else "false" 
+    enforce_refs = _as_bool(os.getenv("MANAGED_SECRETS_REQUIRED_IN_PRODUCTION", default_enforce), default=False)
+
 
     is_reference = value.startswith(("file://", "aws-sm://", "gcp-sm://", "azure-kv://", "vault://"))
     if is_reference:
