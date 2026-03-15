@@ -47,8 +47,12 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: 3.35.x
           channel: stable
           cache: true
+
+      - name: Disable Flutter analytics in CI
+        run: flutter config --no-analytics --no-cli-animations
 
       - name: Install Flutter dependencies
         run: flutter pub get
@@ -74,15 +78,23 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: gradle
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: 3.35.x
           channel: stable
           cache: true
 
+      - name: Disable Flutter analytics in CI
+        run: flutter config --no-analytics --no-cli-animations
+
       - name: Install Flutter dependencies
         run: flutter pub get
+
+      - name: Pre-cache Flutter Android artifacts
+        run: flutter precache --android
 
       - name: Enable KVM group permissions
         run: |
@@ -97,4 +109,8 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
-          script: flutter test integration_test/observability_e2e_test.dart -d emulator-5554 --reporter expanded
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: |
+            adb wait-for-device
+            flutter test integration_test/observability_e2e_test.dart -d emulator-5554 --reporter expanded --timeout 20m --no-pub
