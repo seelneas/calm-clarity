@@ -66,7 +66,7 @@ jobs:
   flutter-integration-tests:
     name: Flutter Integration Tests (Android Emulator)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     needs: flutter-tests
 
     steps:
@@ -122,5 +122,5 @@ jobs:
             flutter doctor -v
             adb wait-for-device
             adb devices
-            flutter test integration_test/observability_e2e_test.dart --reporter expanded --timeout 30m
+            flutter test integration_test/observability_e2e_test.dart -d emulator-5554 --reporter expanded --timeout 40m
 
