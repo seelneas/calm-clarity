@@ -109,11 +109,16 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Build Android APK (Pre-warm)
+        run: |
+          flutter build apk --debug
+          # This helps cache the build results so 'flutter test' doesn't have to compile everything from scratch
+
       - name: Run integration test on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
-          target: default
+          target: google_apis
           arch: x86_64
           disable-animations: true
           emulator-boot-timeout: 900
@@ -122,5 +127,7 @@ jobs:
             flutter doctor -v
             adb wait-for-device
             adb devices
-            flutter test integration_test/observability_e2e_test.dart -d emulator-5554 --reporter expanded --timeout 40m
+            # --no-enable-impeller is crucial to avoid hangs with Vulkan in headless environments
+            flutter test integration_test/observability_e2e_test.dart -d emulator-5554 --no-enable-impeller --reporter expanded --timeout 40m
+
 
