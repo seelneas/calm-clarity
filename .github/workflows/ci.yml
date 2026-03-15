@@ -125,9 +125,13 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -no-snapshot
           script: |
             flutter doctor -v
+            echo "Waiting for emulator to be ready..."
             adb wait-for-device
-            adb devices
-            # --no-enable-impeller is crucial to avoid hangs with Vulkan in headless environments
-            flutter test integration_test/observability_e2e_test.dart -d emulator-5554 --no-enable-impeller --reporter expanded --timeout 40m
+            # Unlock the screen
+            adb shell input keyevent 82
+            echo "Emulator is ready. Running tests..."
+            # Use -d android to pick the first available Android device (the emulator)
+            flutter test integration_test/observability_e2e_test.dart -d android --no-enable-impeller --reporter expanded --timeout 40m
+
 
 
