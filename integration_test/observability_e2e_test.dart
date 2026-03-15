@@ -1,3 +1,4 @@
+@Timeout(Duration(minutes: 20))
 import 'dart:convert';
 
 import 'package:calm_clarity/screens/observability_dashboard_screen.dart';

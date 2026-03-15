@@ -47,7 +47,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.35.4
+          flutter-version: 3.35.6
           channel: stable
           cache: true
 
@@ -83,7 +83,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.35.4
+          flutter-version: 3.35.6
           channel: stable
           cache: true
 
@@ -102,6 +102,9 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Build Android APK (Pre-warm)
+        run: flutter build apk --debug
+
       - name: Run integration test on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -113,4 +116,4 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: |
             adb wait-for-device
-            flutter test integration_test/observability_e2e_test.dart -d emulator-5554 --reporter expanded --timeout 20m --no-pub
+            flutter test integration_test/observability_e2e_test.dart -d emulator-5554 --reporter expanded --timeout 30m --no-pub
