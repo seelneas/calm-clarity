@@ -115,30 +115,17 @@ jobs:
       - name: Run integration test on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 29
+          api-level: 30
           target: default
           arch: x86_64
-          force-avd-creation: false
+          force-avd-creation: true
           disable-animations: true
           emulator-boot-timeout: 1200
-          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu off -noaudio -no-boot-anim -no-snapshot -no-snapshot-save -no-metrics
           script: |
             flutter doctor -v
-            echo "Waiting for emulator to be ready..."
             adb wait-for-device
-            # Ensure the emulator is actually booted
-            for i in {1..30}; do
-              BOOT_COMPLETED=$(adb shell getprop sys.boot_completed | tr -d '\r')
-              if [ "$BOOT_COMPLETED" == "1" ]; then
-                echo "Emulator boot completed!"
-                break
-              fi
-              echo "Waiting for boot completion... ($i/30)"
-              sleep 10
-            done
-            # Unlock the screen
-            adb shell input keyevent 82
-            echo "Emulator is ready. Running tests..."
+            adb devices
             flutter test integration_test/observability_e2e_test.dart -d android --no-enable-impeller --reporter expanded --timeout 40m
 
 
