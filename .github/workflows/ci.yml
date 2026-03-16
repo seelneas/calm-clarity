@@ -97,7 +97,6 @@ jobs:
         run: |
           df -h
           sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android/sdk/system-images
           sudo rm -rf /opt/ghc
           sudo rm -rf /usr/local/share/boost
           sudo docker image prune -af || true
@@ -112,25 +111,34 @@ jobs:
       - name: Build Android APK (Pre-warm)
         run: |
           flutter build apk --debug
-          # This helps cache the build results so 'flutter test' doesn't have to compile everything from scratch
 
       - name: Run integration test on Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 30
-          target: google_apis
+          api-level: 29
+          target: default
           arch: x86_64
+          force-avd-creation: false
           disable-animations: true
-          emulator-boot-timeout: 900
-          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -no-snapshot
+          emulator-boot-timeout: 1200
+          emulator-options: -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim -camera-back none
           script: |
             flutter doctor -v
             echo "Waiting for emulator to be ready..."
             adb wait-for-device
+            # Ensure the emulator is actually booted
+            for i in {1..30}; do
+              BOOT_COMPLETED=$(adb shell getprop sys.boot_completed | tr -d '\r')
+              if [ "$BOOT_COMPLETED" == "1" ]; then
+                echo "Emulator boot completed!"
+                break
+              fi
+              echo "Waiting for boot completion... ($i/30)"
+              sleep 10
+            done
             # Unlock the screen
             adb shell input keyevent 82
             echo "Emulator is ready. Running tests..."
-            # Use -d android to pick the first available Android device (the emulator)
             flutter test integration_test/observability_e2e_test.dart -d android --no-enable-impeller --reporter expanded --timeout 40m
 
 
