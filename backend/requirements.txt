@@ -11,7 +11,6 @@ requests
 redis
 rq
 sentence-transformers
-pytest
 supabase
 psycopg2-binary
 resend
