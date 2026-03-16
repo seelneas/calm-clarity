@@ -6,9 +6,7 @@ Calm Clarity is a Flutter + FastAPI app for voice journaling, mood tracking, AI 
 
 - `lib/`: Flutter app
 - `backend/`: FastAPI API + worker logic
-- `backend/tests/`: backend integration tests
 - `test/`: Flutter unit/widget tests
-- `integration_test/`: Flutter integration tests
 
 ## Prerequisites
 
@@ -16,7 +14,6 @@ Calm Clarity is a Flutter + FastAPI app for voice journaling, mood tracking, AI 
 - Python 3.10+
 - `pip`
 - (Optional, for queue workers) Redis
-- (macOS integration tests) CocoaPods
 
 ## Quick Start
 
@@ -116,15 +113,7 @@ python worker.py
 
 ## Testing
 
-### Backend tests
-
-```bash
-cd backend
-source .venv/bin/activate
-python -m pytest -q
-```
-
-### Flutter tests
+### Flutter unit and widget tests
 
 From repo root:
 
@@ -132,19 +121,11 @@ From repo root:
 flutter test
 ```
 
-### Integration test (real target)
-
-```bash
-flutter test integration_test/observability_e2e_test.dart -d macos
-```
-
 ## CI
 
 GitHub Actions workflow: `.github/workflows/ci.yml`
 
-- Backend integration tests
 - Flutter unit/widget tests
-- Flutter integration test on Android emulator
 
 Runs on push to `main` and pull requests.
 
@@ -152,7 +133,6 @@ Runs on push to `main` and pull requests.
 
 - **`Invalid key/value pair: DART_DEFINES...` during Pods:** fixed in `macos/Podfile` parser override.
 - **Android emulator cannot reach backend:** use `http://10.0.2.2:8000`.
-- **Integration test font/network issues:** keep tests independent from runtime font fetching.
 - **No AI responses:** verify provider keys or use fallback mode.
 - **Google popup closes (`popup_closed`) on web:**
 	- In Google Cloud Console, ensure your **Web OAuth client** includes the exact deployed frontend origin in **Authorized JavaScript origins** (for example `https://app.yourdomain.com`).
@@ -162,6 +142,6 @@ Runs on push to `main` and pull requests.
 		- Flutter build define: `--dart-define=GOOGLE_WEB_CLIENT_ID=<same-id>`
 	- Rebuild/redeploy frontend after changing `--dart-define` values.
 
----
+## License
 
-All Rights Reserved. © 2026
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
