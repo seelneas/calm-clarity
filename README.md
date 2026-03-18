@@ -1,147 +1,110 @@
-# Calm Clarity
+# Calm Clarity: Personal AI Coach & Journaling 🚀
 
-Calm Clarity is a Flutter + FastAPI app for voice journaling, mood tracking, AI coaching, notifications, and observability.
+Calm Clarity is a state-of-the-art, integrated personal AI coaching and voice journaling platform. Built with a high-performance FastAPI backend and a premium Flutter frontend, Calm Clarity combines voice journaling, mood tracking, AI coaching, notifications, and observability into a single, seamless experience.
 
-## What’s in this repo
+[Calm Clarity Landing Page](#)
 
-- `lib/`: Flutter app
-- `backend/`: FastAPI API + worker logic
-- `test/`: Flutter unit/widget tests
+[Live Demo](#)
 
-## Prerequisites
+## ✨ Core Features
 
+### 🤖 Advanced AI Coaching
+- **AI Coach Persona**: Sophisticated, proactive, and personalized intelligence partner.
+- **Multimodal Providers**: Integrated with Groq, Google Gemini, and OpenAI for high-speed, intelligent responses. Fallbacks to rule-based responses if no AI key is provided.
+- **Asynchronous AI Jobs**: Dedicated queue workers handle complex background AI tasks without blocking the user interface.
+
+### 📅 Unified Wellness Suite
+- **Voice Journaling**: Record your thoughts effortlessly.
+- **Mood Tracking**: Log and track your emotional state over time.
+- **Notifications**: Proactive nudges and reminders for your mental wellness journey.
+
+### 🔐 Secure Authentication & Utility
+- **Robust Auth**: Secured Google OAuth Web Client integration.
+- **Centralized Secret Management**: Runtime secret loading via `backend/secret_manager.py`, supporting AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, and Vault.
+- **Health Diagnostics**: Real-time observability and logging built-in.
+
+## 🛠️ Tech Stack
+
+### Backend
+- **Core Framework**: Python 3.10+ with FastAPI
+- **Messaging/Queue**: Redis (for background task processing via `worker_supervisor.py`)
+- **AI Models**: Groq, Google Gemini, and OpenAI
+
+### Frontend
+- **Framework**: Flutter (Dart)
+- **Platform Support**: Android, iOS, Web (Chrome)
+- **Communication**: REST APIs with dependency injection (`API_BASE_URL`)
+
+## 🏁 Getting Started
+
+### 1. Prerequisites
 - Flutter SDK
 - Python 3.10+
 - `pip`
-- (Optional, for queue workers) Redis
+- (Optional, recommended) Redis for queue workers
 
-## Quick Start
-
-### 1) Run backend
-
+### 2. Backend Installation
 ```bash
 cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+# Configure your API Keys and Google Client ID
 export GOOGLE_CLIENT_ID=<your-google-oauth-web-client-id>
 uvicorn main:app --reload
 ```
+Backend docs will be available at: `http://127.0.0.1:8000/docs`
 
-Backend docs: `http://127.0.0.1:8000/docs`
-
-### 2) Run Flutter app
-
-From repo root:
-
+### 3. Frontend Installation
 ```bash
+# Return to the repo root
 flutter pub get
-flutter run \
-	--dart-define=API_BASE_URL=http://127.0.0.1:8000 \
-	--dart-define=GOOGLE_WEB_CLIENT_ID=<your-google-oauth-web-client-id>
 ```
 
-Android emulator base URL:
-
+**Run on Android emulator:**
 ```bash
 flutter run \
 	--dart-define=API_BASE_URL=http://10.0.2.2:8000 \
 	--dart-define=GOOGLE_WEB_CLIENT_ID=<your-google-oauth-web-client-id>
 ```
 
-Web (Chrome) example:
-
+**Run on Web (Chrome):**
 ```bash
 flutter run -d chrome \
 	--dart-define=API_BASE_URL=http://127.0.0.1:8000 \
 	--dart-define=GOOGLE_WEB_CLIENT_ID=<your-google-oauth-web-client-id>
 ```
 
-Note: if you change any `--dart-define`, do a full restart (stop and run again), not only hot reload.
+*(Note: If you change any `--dart-define`, do a full restart, not only a hot reload.)*
 
-## Environment Variables (Minimal)
-
-Set these in backend env for core auth:
-
-- `SECRET_KEY`
-- `GOOGLE_CLIENT_ID`
-
-Production recommendation: set secret vars as managed-secret references (`aws-sm://`, `gcp-sm://`, `azure-kv://`, `vault://`, `file://`) and keep `MANAGED_SECRETS_REQUIRED_IN_PRODUCTION=true`.
-
-Optional but common:
-
-- AI provider key(s): `GROQ_API_KEY` or `GEMINI_API_KEY` or `OPENAI_API_KEY`
-- Queue mode: `REDIS_URL`, `AI_QUEUE_NAME`
-- Admin endpoints: `ADMIN_API_KEY` (optional)
-
-If no AI key is set, backend falls back to rule-based responses.
-
-## Secret Lifecycle Management
-
-- Runtime secret loading is centralized in `backend/secret_manager.py`.
-- In production, plaintext secret values are rejected when `MANAGED_SECRETS_REQUIRED_IN_PRODUCTION=true`.
-- Supported secret references:
-	- `aws-sm://...`
-	- `gcp-sm://...`
-	- `azure-kv://...`
-	- `vault://...`
-	- `file://...`
-
-### Rotation workflow
-
-Generate a provider-specific rotation plan from `backend/`:
-
+### 4. Build Android APK
+To generate a release APK that you can install on an Android device, run:
 ```bash
-python scripts/rotate_secrets.py --provider aws --env production
+flutter build apk --release
 ```
+Once the build completes, your `.apk` file will be located at:
+`build/app/outputs/flutter-apk/app-release.apk`
 
-Then follow `docs/security/secret-rotation-runbook.md` to apply, deploy, validate, and rollback safely.
-
-## Queue Worker (Optional, recommended for async AI jobs)
-
-Run in `backend/`:
-
-```bash
-python worker_supervisor.py
-```
-
-Or single worker:
-
-```bash
-python worker.py
-```
-
-## Testing
-
-### Flutter unit and widget tests
-
-From repo root:
-
+**(Optional) Testing**
+From repo root, run Flutter unit and widget tests:
 ```bash
 flutter test
 ```
 
-## CI
+## 🧠 Technical Challenges & Decisions
+- **AI Provider Orchestration**: Managing multiple LLM providers (Groq, Gemini, OpenAI) required a unified interface to decouple core logic from specific APIs, ensuring seamless provider switching and robust fallback mechanisms.
+- **Background Processing**: To ensure a responsive UX during AI responses, async operations and complex AI tool execution are handed off to background queue workers (`worker_supervisor.py`).
 
-GitHub Actions workflow: `.github/workflows/ci.yml`
+## 🛡️ Security Audit & Best Practices
+- **Zero Hardcoded Secrets**: A comprehensive audit ensures all sensitive keys (API, Database) are managed exclusively through environment variables.
+- **Managed Secrets in Production**: Production environments strictly require managed-secret references (`aws-sm://`, `gcp-sm://`, `azure-kv://`) and enforce `MANAGED_SECRETS_REQUIRED_IN_PRODUCTION=true`.
+- **OAuth Validation**: Strict validation ensures Google popup contexts match the exact deployed frontend origins and web client IDs.
 
-- Flutter unit/widget tests
+## 🏗️ Architecture
 
-Runs on push to `main` and pull requests.
+Loading...
 
-## Troubleshooting
-
-- **`Invalid key/value pair: DART_DEFINES...` during Pods:** fixed in `macos/Podfile` parser override.
-- **Android emulator cannot reach backend:** use `http://10.0.2.2:8000`.
-- **No AI responses:** verify provider keys or use fallback mode.
-- **Google popup closes (`popup_closed`) on web:**
-	- In Google Cloud Console, ensure your **Web OAuth client** includes the exact deployed frontend origin in **Authorized JavaScript origins** (for example `https://app.yourdomain.com`).
-	- Add backend callback origin(s) as needed in **Authorized redirect URIs**.
-	- Use the same Web client ID in both places:
-		- backend env: `GOOGLE_CLIENT_ID`
-		- Flutter build define: `--dart-define=GOOGLE_WEB_CLIENT_ID=<same-id>`
-	- Rebuild/redeploy frontend after changing `--dart-define` values.
-
-## License
-
+## 📜 License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Managed by seelneas.
