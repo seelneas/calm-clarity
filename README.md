@@ -2,9 +2,9 @@
 
 Calm Clarity is a state-of-the-art, integrated personal AI coaching and voice journaling platform. Built with a high-performance FastAPI backend and a premium Flutter frontend, Calm Clarity combines voice journaling, mood tracking, AI coaching, notifications, and observability into a single, seamless experience.
 
-![Calm Clarity Landing Page](calm_clarity.png)
+<img src="calm_clarity.png" width="600"/>
 
-[Live Demo](#)
+[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen?style=for-the-badge&logo=vercel)](https://seelneas.github.io/calm-clarity/)
 
 ## ✨ Core Features
 
